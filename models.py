@@ -352,7 +352,7 @@ class InventoryRepository:
                 raise InventoryError("收纳盒不存在")
 
             name = clean_text(payload.get("name")) or existing["name"]
-            description = clean_text(payload.get("description")) or existing["description"]
+            description = clean_text(payload.get("description")) if "description" in payload else existing["description"]
             rows = clean_int(payload.get("rows"), existing["rows"])
             cols = clean_int(payload.get("cols"), existing["cols"])
             color = clean_color(payload.get("color"), existing["color"] or "#84b59b")

@@ -27,7 +27,8 @@ function app() {
         name: '',
         rows: 4,
         cols: 6,
-        color: '#84b59b'
+        color: '#84b59b',
+        description: ''
     });
 
     return {
@@ -420,7 +421,8 @@ function app() {
                 name: box.name || '',
                 rows: box.rows || 4,
                 cols: box.cols || 6,
-                color: box.color || '#84b59b'
+                color: box.color || '#84b59b',
+                description: box.description || ''
             } : emptyBoxForm();
             this.modal = 'box-form';
         },
@@ -430,14 +432,14 @@ function app() {
         },
 
         async saveBox() {
-            const { id, name, rows, cols, color } = this.boxForm;
+            const { id, name, rows, cols, color, description } = this.boxForm;
             if (!String(name || '').trim()) {
                 this.toast('请填写收纳盒名称', 'warning');
                 return;
             }
             try {
                 this.loadingOverlay = true;
-                const payload = { name: name.trim(), rows: Number(rows), cols: Number(cols), color };
+                const payload = { name: name.trim(), rows: Number(rows), cols: Number(cols), color, description: description || null };
                 if (id) {
                     await api.put(`/api/boxes/${id}`, payload);
                     logAction('UPDATE', `更新收纳盒 ID=${id} 名称=${payload.name}`);

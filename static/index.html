@@ -151,22 +151,24 @@
                         <button class="btn btn-primary" @click="openComponentForm()">新增元器件</button>
                     </div>
                     <div class="filter-ribbon">
-                        <select x-model="filterCategory" @change="componentPagination.page = 1; loadComponents()">
-                            <option value="">全部分类</option>
-                            <template x-for="category in categories" :key="category.id">
-                                <option :value="category.id" x-text="category.name"></option>
-                            </template>
-                        </select>
-                        <select x-model="filterBox" @change="componentPagination.page = 1; loadComponents()">
-                            <option value="">全部收纳盒</option>
-                            <template x-for="box in boxes" :key="box.id">
-                                <option :value="box.id" x-text="box.name"></option>
-                            </template>
-                        </select>
-                        <select x-model="filterStock" @change="componentPagination.page = 1; loadComponents()">
-                            <option value="">全部库存</option>
-                            <option value="low">仅低库存</option>
-                        </select>
+                        <div class="filter-group">
+                            <select x-model="filterCategory" @change="componentPagination.page = 1; loadComponents()">
+                                <option value="">全部分类</option>
+                                <template x-for="category in categories" :key="category.id">
+                                    <option :value="category.id" x-text="category.name"></option>
+                                </template>
+                            </select>
+                            <select x-model="filterBox" @change="componentPagination.page = 1; loadComponents()">
+                                <option value="">全部收纳盒</option>
+                                <template x-for="box in boxes" :key="box.id">
+                                    <option :value="box.id" x-text="box.name"></option>
+                                </template>
+                            </select>
+                            <select x-model="filterStock" @change="componentPagination.page = 1; loadComponents()">
+                                <option value="">全部库存</option>
+                                <option value="low">仅低库存</option>
+                            </select>
+                        </div>
                         <button class="btn btn-secondary" @click="resetComponentFilters()">重置</button>
                         <span class="inventory-chip ml-auto"><span x-text="componentPagination.total"></span>&nbsp;items</span>
                     </div>
@@ -241,6 +243,10 @@
                             <button class="btn btn-secondary" @click="editBox(currentBox)">编辑</button>
                             <button class="btn btn-danger" @click="deleteBox(currentBox)">删除</button>
                         </div>
+                    </div>
+                    <div class="section-card" x-show="currentBox?.description" style="padding: 16px 20px;">
+                        <div class="section-mini-title">注释</div>
+                        <p style="margin: 0; color: var(--muted); line-height: 1.6;" x-text="currentBox.description"></p>
                     </div>
                     <div class="box-grid-panel" x-show="currentBox" :style="`grid-template-columns: repeat(${currentBox?.cols || 1}, minmax(0, 1fr));`">
                         <template x-for="cell in boxGrid" :key="cell.id">
@@ -525,6 +531,7 @@
                     <label>列数<input type="number" min="1" max="20" x-model.number="boxForm.cols"></label>
                 </div>
                 <label>颜色<input type="color" x-model="boxForm.color" class="color-input"></label>
+                <label>注释<textarea rows="3" x-model="boxForm.description" placeholder="记录这个收纳盒的用途、位置或其他备注"></textarea></label>
                 <div class="box-preview" :style="`--box-accent:${boxForm.color}; grid-template-columns: repeat(${Math.min(boxForm.cols || 4, 8)}, 1fr);`">
                     <template x-for="i in Math.min((boxForm.rows || 4) * (boxForm.cols || 4), 64)" :key="i">
                         <span></span>
@@ -572,6 +579,7 @@
     <script src="/static/js/map.js"></script>
     <script src="/static/js/nfc.js"></script>
     <script src="/static/js/scanner.js"></script>
+    <script src="/static/js/bg-fx.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>
