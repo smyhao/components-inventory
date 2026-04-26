@@ -21,7 +21,20 @@ CREATE TABLE IF NOT EXISTS boxes (
     cols INTEGER NOT NULL DEFAULT 1,
     description TEXT,
     color TEXT DEFAULT '#84b59b',
+    cabinet_id INTEGER,
+    cabinet_slot INTEGER DEFAULT 0,
     nfc_uid TEXT UNIQUE,
+    position_x REAL DEFAULT 0,
+    position_y REAL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (cabinet_id) REFERENCES cabinets(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS cabinets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    color TEXT DEFAULT '#8b9aae',
     position_x REAL DEFAULT 0,
     position_y REAL DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -86,6 +99,17 @@ CREATE TABLE IF NOT EXISTS images (
     FOREIGN KEY (component_id) REFERENCES components(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    component_id INTEGER,
+    path TEXT NOT NULL UNIQUE,
+    original_name TEXT NOT NULL,
+    mime_type TEXT,
+    file_size INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (component_id) REFERENCES components(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS stock_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     component_id INTEGER NOT NULL,
@@ -104,6 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_components_box_id ON components(box_id);
 CREATE INDEX IF NOT EXISTS idx_components_quantity ON components(quantity);
 CREATE INDEX IF NOT EXISTS idx_compartments_box_id ON compartments(box_id);
 CREATE INDEX IF NOT EXISTS idx_stock_logs_component_id ON stock_logs(component_id);
+CREATE INDEX IF NOT EXISTS idx_documents_component_id ON documents(component_id);
 """
 
 
@@ -132,7 +157,12 @@ def init_database(database_path: Path) -> None:
         box_columns = {row[1] for row in conn.execute("PRAGMA table_info(boxes)").fetchall()}
         if "color" not in box_columns:
             conn.execute("ALTER TABLE boxes ADD COLUMN color TEXT DEFAULT '#84b59b'")
+        if "cabinet_id" not in box_columns:
+            conn.execute("ALTER TABLE boxes ADD COLUMN cabinet_id INTEGER")
+        if "cabinet_slot" not in box_columns:
+            conn.execute("ALTER TABLE boxes ADD COLUMN cabinet_slot INTEGER DEFAULT 0")
         conn.execute("UPDATE boxes SET color = '#84b59b' WHERE color IS NULL OR TRIM(color) = ''")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_boxes_cabinet_id ON boxes(cabinet_id)")
 
         existing = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
         if existing == 0:

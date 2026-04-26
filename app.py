@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from html import escape
 import io
 import re
 import uuid
@@ -12,10 +13,13 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 from openpyxl import Workbook, load_workbook
 from PIL import Image, ImageOps
 from werkzeug.exceptions import HTTPException
+from werkzeug.utils import secure_filename
 
 from config import (
+    ALLOWED_DOCUMENT_EXTENSIONS,
     ALLOWED_IMAGE_EXTENSIONS,
     DATABASE_PATH,
+    DOCUMENT_FOLDER,
     FRONTEND_LOG_FILE,
     HOST,
     LOG_FILE,
@@ -65,6 +69,120 @@ def excel_response(data: bytes, filename: str):
         as_attachment=True,
         download_name=filename,
     )
+
+
+def current_server_url() -> str:
+    return (request.url_root or SERVER_URL).rstrip("/")
+
+
+def component_link(component_id: int) -> str:
+    return f"{current_server_url()}/?component={component_id}"
+
+
+def component_qr_svg(component_id: int) -> bytes:
+    try:
+        import qrcode
+        import qrcode.image.svg
+    except ImportError as exc:
+        raise InventoryError("missing dependency qrcode, please run pip install -r requirements.txt") from exc
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=2,
+        image_factory=qrcode.image.svg.SvgPathImage,
+    )
+    qr.add_data(component_link(component_id))
+    qr.make(fit=True)
+    image = qr.make_image()
+    buffer = io.BytesIO()
+    image.save(buffer)
+    return buffer.getvalue()
+
+
+def parse_component_ids(value: str) -> list[int]:
+    ids: list[int] = []
+    seen: set[int] = set()
+    for part in re.split(r"[,，\s]+", value or ""):
+        component_id = clean_int(part, 0)
+        if component_id > 0 and component_id not in seen:
+            ids.append(component_id)
+            seen.add(component_id)
+    return ids[:500]
+
+
+def qr_label_print_page(components: list[dict[str, Any]]) -> str:
+    label_count = len(components)
+    cards = []
+    for item in components:
+        component_id = item["id"]
+        spec = " / ".join(
+            str(value)
+            for value in [item.get("model"), item.get("package"), item.get("nominal_value")]
+            if value
+        )
+        location = " / ".join(
+            str(value)
+            for value in [item.get("box_name"), item.get("cell_label")]
+            if value
+        )
+        quantity = item.get("quantity") if item.get("quantity") is not None else 0
+        cards.append(
+            f"""
+            <article class="label">
+                <img src="/api/components/{component_id}/qr.svg" alt="QR">
+                <div class="label-text">
+                    <strong>{escape(str(item.get("name") or ""))}</strong>
+                    <span>{escape(spec or "无规格信息")}</span>
+                    <small>{escape(location or "未入盒")} · 库存 {escape(str(quantity))}</small>
+                </div>
+            </article>
+            """
+        )
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>元器件二维码标签</title>
+    <style>
+        * {{ box-sizing: border-box; }}
+        body {{ margin: 0; font-family: Arial, "Microsoft YaHei", sans-serif; color: #1f2933; background: #f7f5ef; }}
+        header {{ position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; background: rgba(255,255,255,.94); border-bottom: 1px solid #ddd6c8; }}
+        h1 {{ margin: 0; font-size: 18px; }}
+        p {{ margin: 4px 0 0; color: #697386; font-size: 13px; }}
+        button {{ border: 0; border-radius: 8px; padding: 10px 16px; background: #2563eb; color: white; font-weight: 700; cursor: pointer; }}
+        main {{ padding: 18px; }}
+        .sheet {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }}
+        .label {{ min-height: 96px; display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; align-items: center; padding: 8px; background: white; border: 1px dashed #a8b0bd; border-radius: 8px; break-inside: avoid; }}
+        .label img {{ width: 78px; height: 78px; display: block; }}
+        .label-text {{ min-width: 0; display: flex; flex-direction: column; gap: 4px; }}
+        .label-text strong {{ font-size: 14px; line-height: 1.2; overflow-wrap: anywhere; }}
+        .label-text span, .label-text small {{ font-size: 11px; color: #52606d; overflow-wrap: anywhere; }}
+        .empty {{ padding: 40px; text-align: center; color: #697386; background: white; border-radius: 8px; }}
+        @media print {{
+            body {{ background: white; }}
+            header {{ display: none; }}
+            main {{ padding: 0; }}
+            .sheet {{ grid-template-columns: repeat(3, 1fr); gap: 4mm; }}
+            .label {{ border-color: #777; border-radius: 2mm; page-break-inside: avoid; }}
+        }}
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>元器件二维码标签</h1>
+            <p>共 {label_count} 个标签。扫码后会打开对应元器件详情，可继续修改参数或库存。</p>
+        </div>
+        <button onclick="window.print()">打印</button>
+    </header>
+    <main>
+        {"<section class='sheet'>" + "".join(cards) + "</section>" if cards else "<div class='empty'>没有可打印的元器件</div>"}
+    </main>
+</body>
+</html>"""
 
 
 def split_tags(value: Any) -> list[str]:
@@ -131,14 +249,48 @@ def workbook_bytes(workbook: Workbook) -> bytes:
     return buffer.getvalue()
 
 
-def parse_component_import(file_storage) -> dict[str, Any]:
-    workbook = load_workbook(filename=io.BytesIO(file_storage.read()), data_only=True)
+def parse_csv_rows(data: bytes) -> list[list[Any]]:
+    text = decode_csv_bytes(data)
+    sample = text[:2048]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",\t;")
+    except csv.Error:
+        dialect = csv.excel_tab if "\t" in sample else csv.excel
+    return list(csv.reader(io.StringIO(text), dialect))
+
+
+def parse_xlsx_rows(data: bytes) -> list[tuple[Any, ...]]:
+    workbook = load_workbook(filename=io.BytesIO(data), data_only=True)
     sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
+    return list(sheet.iter_rows(values_only=True))
+
+
+def component_import_rows(file_storage) -> tuple[list[Any], str]:
+    filename = file_storage.filename or ""
+    ext = Path(filename).suffix.lower()
+    data = file_storage.read()
+    if ext == ".csv" or ext == ".txt":
+        return parse_csv_rows(data), "csv"
+    if ext == ".xlsx":
+        return parse_xlsx_rows(data), "xlsx"
+    raise InventoryError("only csv and xlsx files are supported")
+
+
+def parse_component_import(file_storage) -> dict[str, Any]:
+    rows, file_type = component_import_rows(file_storage)
     if not rows:
-        return {"success": 0, "failed": 0, "errors": []}
+        return {"success": 0, "failed": 0, "errors": [], "file_type": file_type}
 
     header_map = resolve_headers(list(rows[0]), COMPONENT_HEADER_ALIASES)
+    if "name" not in header_map:
+        raise InventoryError("missing required header: name")
+
+    def cell(row: Any, field: str, default: Any = "") -> Any:
+        index = header_map.get(field)
+        if index is None:
+            return default
+        return row[index] if index < len(row) else default
+
     errors: list[dict[str, Any]] = []
     success_count = 0
     failed_count = 0
@@ -147,22 +299,22 @@ def parse_component_import(file_storage) -> dict[str, Any]:
         if not any(value not in (None, "") for value in row):
             continue
         try:
-            name = clean_text(row[header_map["name"]]) if "name" in header_map else ""
+            name = clean_text(cell(row, "name"))
             if not name:
                 raise InventoryError("missing component name")
 
-            category_name = clean_text(row[header_map["category"]]) if "category" in header_map else ""
+            category_name = clean_text(cell(row, "category"))
             category_id = repo.ensure_category_by_name(category_name) if category_name else None
 
             box = None
             compartment = None
-            box_name = clean_text(row[header_map["box_name"]]) if "box_name" in header_map else ""
+            box_name = clean_text(cell(row, "box_name"))
             if box_name:
                 box = repo.find_box_by_name(box_name)
                 if not box:
                     raise InventoryError(f"box not found: {box_name}")
-                grid_row = clean_optional_int(row[header_map["row"]]) if "row" in header_map else None
-                grid_col = clean_optional_int(row[header_map["col"]]) if "col" in header_map else None
+                grid_row = clean_optional_int(cell(row, "row"))
+                grid_col = clean_optional_int(cell(row, "col"))
                 if grid_row is not None and grid_col is not None:
                     compartment = repo.find_compartment_by_coordinates(box["id"], grid_row, grid_col)
                     if not compartment:
@@ -171,18 +323,18 @@ def parse_component_import(file_storage) -> dict[str, Any]:
             payload = {
                 "name": name,
                 "category_id": category_id,
-                "model": clean_text(row[header_map["model"]]) if "model" in header_map else "",
-                "package": clean_text(row[header_map["package"]]) if "package" in header_map else "",
-                "nominal_value": clean_text(row[header_map["nominal_value"]]) if "nominal_value" in header_map else "",
-                "voltage_rating": clean_text(row[header_map["voltage_rating"]]) if "voltage_rating" in header_map else "",
-                "current_rating": clean_text(row[header_map["current_rating"]]) if "current_rating" in header_map else "",
-                "power_rating": clean_text(row[header_map["power_rating"]]) if "power_rating" in header_map else "",
-                "tolerance": clean_text(row[header_map["tolerance"]]) if "tolerance" in header_map else "",
-                "material_type": clean_text(row[header_map["material_type"]]) if "material_type" in header_map else "",
-                "manufacturer": clean_text(row[header_map["manufacturer"]]) if "manufacturer" in header_map else "",
-                "quantity": clean_int(row[header_map["quantity"]], 0) if "quantity" in header_map else 0,
-                "description": clean_text(row[header_map["description"]]) if "description" in header_map else "",
-                "tags": split_tags(row[header_map["tags"]]) if "tags" in header_map else [],
+                "model": clean_text(cell(row, "model")),
+                "package": clean_text(cell(row, "package")),
+                "nominal_value": clean_text(cell(row, "nominal_value")),
+                "voltage_rating": clean_text(cell(row, "voltage_rating")),
+                "current_rating": clean_text(cell(row, "current_rating")),
+                "power_rating": clean_text(cell(row, "power_rating")),
+                "tolerance": clean_text(cell(row, "tolerance")),
+                "material_type": clean_text(cell(row, "material_type")),
+                "manufacturer": clean_text(cell(row, "manufacturer")),
+                "quantity": clean_int(cell(row, "quantity"), 0),
+                "description": clean_text(cell(row, "description")),
+                "tags": split_tags(cell(row, "tags")) if "tags" in header_map else [],
                 "box_id": box["id"] if box else None,
                 "compartment_id": compartment["id"] if compartment else None,
                 "cell_row": compartment["id"] if compartment else None,
@@ -194,8 +346,11 @@ def parse_component_import(file_storage) -> dict[str, Any]:
             failed_count += 1
             errors.append({"row": row_index, "reason": str(exc)})
 
-    file_logger.write_backend("COMPONENT", f"excel import finished: success={success_count}, failed={failed_count}")
-    return {"success": success_count, "failed": failed_count, "errors": errors}
+    file_logger.write_backend(
+        "COMPONENT",
+        f"component {file_type} import finished: success={success_count}, failed={failed_count}",
+    )
+    return {"success": success_count, "failed": failed_count, "errors": errors, "file_type": file_type}
 
 
 def export_components_xlsx() -> bytes:
@@ -442,6 +597,19 @@ def index_page():
     return send_from_directory(STATIC_DIR, "index.html")
 
 
+@app.get("/components/qr-labels")
+def component_qr_labels_page():
+    ids = parse_component_ids(request.args.get("ids", ""))
+    if ids:
+        components = [repo.get_component(component_id) for component_id in ids]
+    else:
+        filters = request.args.to_dict()
+        filters["page"] = clean_int(filters.get("page"), 1)
+        filters["page_size"] = clean_int(filters.get("page_size"), 500)
+        components = repo.list_components(filters)["items"]
+    return Response(qr_label_print_page(components), mimetype="text/html")
+
+
 @app.get("/favicon.ico")
 def favicon():
     return Response(status=204)
@@ -465,6 +633,37 @@ def api_categories():
 @app.post("/api/categories")
 def api_create_category():
     return success(repo.create_category(request.get_json(silent=True) or {}))
+
+
+@app.get("/api/cabinets")
+def api_cabinets():
+    return success(repo.list_cabinets())
+
+
+@app.post("/api/cabinets")
+def api_create_cabinet():
+    return success(repo.create_cabinet(request.get_json(silent=True) or {}))
+
+
+@app.get("/api/cabinets/<int:cabinet_id>")
+def api_cabinet_detail(cabinet_id: int):
+    return success(repo.get_cabinet(cabinet_id))
+
+
+@app.put("/api/cabinets/<int:cabinet_id>")
+def api_update_cabinet(cabinet_id: int):
+    return success(repo.update_cabinet(cabinet_id, request.get_json(silent=True) or {}))
+
+
+@app.delete("/api/cabinets/<int:cabinet_id>")
+def api_delete_cabinet(cabinet_id: int):
+    repo.delete_cabinet(cabinet_id)
+    return success({"id": cabinet_id})
+
+
+@app.put("/api/cabinets/<int:cabinet_id>/layout")
+def api_update_cabinet_layout(cabinet_id: int):
+    return success(repo.update_cabinet_layout(cabinet_id, request.get_json(silent=True) or {}))
 
 
 @app.get("/api/boxes")
@@ -529,6 +728,16 @@ def api_delete_component(component_id: int):
     return success({"id": component_id})
 
 
+@app.get("/api/components/<int:component_id>/qr.svg")
+def api_component_qr_svg(component_id: int):
+    repo.get_component(component_id)
+    return Response(
+        component_qr_svg(component_id),
+        mimetype="image/svg+xml",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.post("/api/components/import")
 def api_import_components():
     file = request.files.get("file")
@@ -577,6 +786,40 @@ def api_upload_image():
 def api_delete_image(image_id: int):
     repo.delete_image(image_id)
     return success({"id": image_id})
+
+
+@app.post("/api/documents/upload")
+def api_upload_document():
+    file = request.files.get("file")
+    if not file or not file.filename:
+        raise InventoryError("missing document file")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_DOCUMENT_EXTENSIONS:
+        raise InventoryError("only pdf/doc/xls/ppt/txt/csv/zip documents are allowed")
+
+    component_id = clean_optional_int(request.form.get("component_id"))
+    original_name = clean_text(Path(file.filename).name) or secure_filename(file.filename) or f"document{ext}"
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    filename = f"documents/{stored_name}"
+    target = DOCUMENT_FOLDER / stored_name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    file.save(target)
+
+    return success(
+        repo.create_document_record(
+            filename,
+            original_name,
+            file.mimetype,
+            target.stat().st_size,
+            component_id,
+        )
+    )
+
+
+@app.delete("/api/documents/<int:document_id>")
+def api_delete_document(document_id: int):
+    repo.delete_document(document_id)
+    return success({"id": document_id})
 
 
 @app.post("/api/frontend/log")

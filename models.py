@@ -143,6 +143,9 @@ class InventoryRepository:
             return None
         return "/uploads/" + relative_path.replace("\\", "/")
 
+    def _file_url(self, relative_path: str | None) -> str | None:
+        return self._image_url(relative_path)
+
     def _load_tags_map(self, conn: sqlite3.Connection, component_ids: list[int]) -> dict[int, list[str]]:
         if not component_ids:
             return {}
@@ -211,6 +214,29 @@ class InventoryRepository:
             for row in rows
         ]
 
+    def _load_documents_for_component(self, conn: sqlite3.Connection, component_id: int) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            conn,
+            """
+            SELECT id, path, original_name, mime_type, file_size, created_at
+            FROM documents
+            WHERE component_id = ?
+            ORDER BY id DESC
+            """,
+            (component_id,),
+        )
+        return [
+            {
+                "id": row["id"],
+                "name": row["original_name"],
+                "url": self._file_url(row["path"]),
+                "mime_type": row["mime_type"],
+                "file_size": row["file_size"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
     def _component_from_row(
         self,
         row: sqlite3.Row,
@@ -224,6 +250,7 @@ class InventoryRepository:
         item["cell_col"] = item.get("grid_col")
         item["spec_summary"] = build_spec_summary(item)
         item["images"] = []
+        item["documents"] = []
         return item
 
     def list_categories(self) -> list[dict[str, Any]]:
@@ -267,13 +294,15 @@ class InventoryRepository:
                 """
                 SELECT
                     b.*,
+                    cb.name AS cabinet_name,
                     COUNT(DISTINCT c.compartment_id) AS occupied_count,
                     COUNT(c.id) AS component_count,
                     COALESCE(SUM(c.quantity), 0) AS total_quantity
                 FROM boxes b
+                LEFT JOIN cabinets cb ON cb.id = b.cabinet_id
                 LEFT JOIN components c ON c.box_id = b.id
                 GROUP BY b.id
-                ORDER BY b.name
+                ORDER BY COALESCE(cb.name, ''), b.cabinet_slot, b.name
                 """,
             )
             items = []
@@ -291,10 +320,12 @@ class InventoryRepository:
                 """
                 SELECT
                     b.*,
+                    cb.name AS cabinet_name,
                     COUNT(DISTINCT c.compartment_id) AS occupied_count,
                     COUNT(c.id) AS component_count,
                     COALESCE(SUM(c.quantity), 0) AS total_quantity
                 FROM boxes b
+                LEFT JOIN cabinets cb ON cb.id = b.cabinet_id
                 LEFT JOIN components c ON c.box_id = b.id
                 WHERE b.id = ?
                 GROUP BY b.id
@@ -325,18 +356,22 @@ class InventoryRepository:
         cols = clean_int(payload.get("cols"), 1)
         description = clean_text(payload.get("description")) or None
         color = clean_color(payload.get("color"))
+        cabinet_id = clean_optional_int(payload.get("cabinet_id"))
+        cabinet_slot = clean_int(payload.get("cabinet_slot"), 0)
         if not name:
             raise InventoryError("box name is required")
         if rows < 1 or cols < 1:
             raise InventoryError("rows and cols must be greater than 0")
 
         with self.connect() as conn:
+            if cabinet_id is not None and not self._fetchone(conn, "SELECT id FROM cabinets WHERE id = ?", (cabinet_id,)):
+                raise InventoryError("cabinet not found")
             cur = conn.execute(
                 """
-                INSERT INTO boxes (name, rows, cols, description, color, position_x, position_y)
-                VALUES (?, ?, ?, ?, ?, 0, 0)
+                INSERT INTO boxes (name, rows, cols, description, color, cabinet_id, cabinet_slot, position_x, position_y)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
                 """,
-                (name, rows, cols, description, color),
+                (name, rows, cols, description, color, cabinet_id, cabinet_slot),
             )
             box_id = cur.lastrowid
             self._ensure_compartments(conn, box_id, rows, cols)
@@ -356,8 +391,13 @@ class InventoryRepository:
             rows = clean_int(payload.get("rows"), existing["rows"])
             cols = clean_int(payload.get("cols"), existing["cols"])
             color = clean_color(payload.get("color"), existing["color"] or "#84b59b")
+            cabinet_id = clean_optional_int(payload.get("cabinet_id")) if "cabinet_id" in payload else existing["cabinet_id"]
+            cabinet_slot = clean_int(payload.get("cabinet_slot"), existing["cabinet_slot"] or 0)
             if rows < 1 or cols < 1:
                 raise InventoryError("行列数量必须大于 0")
+
+            if cabinet_id is not None and not self._fetchone(conn, "SELECT id FROM cabinets WHERE id = ?", (cabinet_id,)):
+                raise InventoryError("cabinet not found")
 
             occupied_out_of_range = self._fetchall(
                 conn,
@@ -373,8 +413,12 @@ class InventoryRepository:
                 raise InventoryError("cannot shrink box because occupied compartments would be removed")
 
             conn.execute(
-                "UPDATE boxes SET name = ?, rows = ?, cols = ?, description = ?, color = ? WHERE id = ?",
-                (name, rows, cols, description, color, box_id),
+                """
+                UPDATE boxes
+                SET name = ?, rows = ?, cols = ?, description = ?, color = ?, cabinet_id = ?, cabinet_slot = ?
+                WHERE id = ?
+                """,
+                (name, rows, cols, description, color, cabinet_id, cabinet_slot, box_id),
             )
             conn.execute(
                 "DELETE FROM compartments WHERE box_id = ? AND (row > ? OR col > ?)",
@@ -407,6 +451,104 @@ class InventoryRepository:
             )
         self.file_logger.write_backend("BOX", f"更新盒子地图位置: ID={box_id}, x={position_x}, y={position_y}")
         return self.get_box(box_id)
+
+    def list_cabinets(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = self._fetchall(
+                conn,
+                """
+                SELECT
+                    cb.*,
+                    COUNT(b.id) AS box_count,
+                    COALESCE(SUM(b.rows * b.cols), 0) AS total_slots,
+                    COUNT(DISTINCT c.compartment_id) AS used_slots,
+                    COALESCE(SUM(c.quantity), 0) AS total_quantity
+                FROM cabinets cb
+                LEFT JOIN boxes b ON b.cabinet_id = cb.id
+                LEFT JOIN components c ON c.box_id = b.id
+                GROUP BY cb.id
+                ORDER BY cb.name
+                """,
+            )
+            return [dict(row) for row in rows]
+
+    def get_cabinet(self, cabinet_id: int) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = self._fetchone(
+                conn,
+                """
+                SELECT
+                    cb.*,
+                    COUNT(b.id) AS box_count,
+                    COALESCE(SUM(b.rows * b.cols), 0) AS total_slots,
+                    COUNT(DISTINCT c.compartment_id) AS used_slots,
+                    COALESCE(SUM(c.quantity), 0) AS total_quantity
+                FROM cabinets cb
+                LEFT JOIN boxes b ON b.cabinet_id = cb.id
+                LEFT JOIN components c ON c.box_id = b.id
+                WHERE cb.id = ?
+                GROUP BY cb.id
+                """,
+                (cabinet_id,),
+            )
+            if not row:
+                raise InventoryError("cabinet not found")
+            return dict(row)
+
+    def create_cabinet(self, payload: dict[str, Any]) -> dict[str, Any]:
+        name = clean_text(payload.get("name"))
+        description = clean_text(payload.get("description")) or None
+        color = clean_color(payload.get("color"), "#8b9aae")
+        if not name:
+            raise InventoryError("cabinet name is required")
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO cabinets (name, description, color, position_x, position_y)
+                VALUES (?, ?, ?, 0, 0)
+                """,
+                (name, description, color),
+            )
+            cabinet_id = cur.lastrowid
+        self.file_logger.write_backend("BOX", f"create cabinet: {name}, color={color}")
+        return self.get_cabinet(cabinet_id)
+
+    def update_cabinet(self, cabinet_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            existing = self._fetchone(conn, "SELECT * FROM cabinets WHERE id = ?", (cabinet_id,))
+            if not existing:
+                raise InventoryError("cabinet not found")
+            name = clean_text(payload.get("name")) or existing["name"]
+            description = clean_text(payload.get("description")) if "description" in payload else existing["description"]
+            color = clean_color(payload.get("color"), existing["color"] or "#8b9aae")
+            conn.execute(
+                "UPDATE cabinets SET name = ?, description = ?, color = ? WHERE id = ?",
+                (name, description, color, cabinet_id),
+            )
+        self.file_logger.write_backend("BOX", f"update cabinet: ID={cabinet_id}, name={name}, color={color}")
+        return self.get_cabinet(cabinet_id)
+
+    def delete_cabinet(self, cabinet_id: int) -> None:
+        with self.connect() as conn:
+            cabinet = self._fetchone(conn, "SELECT * FROM cabinets WHERE id = ?", (cabinet_id,))
+            if not cabinet:
+                raise InventoryError("cabinet not found")
+            occupied = self._fetchone(conn, "SELECT COUNT(*) AS cnt FROM boxes WHERE cabinet_id = ?", (cabinet_id,))
+            if occupied and occupied["cnt"] > 0:
+                raise InventoryError("cabinet contains boxes")
+            conn.execute("DELETE FROM cabinets WHERE id = ?", (cabinet_id,))
+        self.file_logger.write_backend("BOX", f"delete cabinet: ID={cabinet_id}, name={cabinet['name']}")
+
+    def update_cabinet_layout(self, cabinet_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        position_x = float(payload.get("position_x") or 0)
+        position_y = float(payload.get("position_y") or 0)
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE cabinets SET position_x = ?, position_y = ? WHERE id = ?",
+                (position_x, position_y, cabinet_id),
+            )
+        self.file_logger.write_backend("BOX", f"update cabinet map position: ID={cabinet_id}, x={position_x}, y={position_y}")
+        return self.get_cabinet(cabinet_id)
 
     def get_box_grid(self, box_id: int) -> dict[str, Any]:
         box = self.get_box(box_id)
@@ -615,6 +757,92 @@ class InventoryRepository:
                 except OSError:
                     continue
 
+    def _extract_document_id(self, conn: sqlite3.Connection, ref: Any, component_id: int | None = None) -> int | None:
+        if isinstance(ref, int):
+            row = self._fetchone(
+                conn,
+                "SELECT id FROM documents WHERE id = ? AND (component_id IS NULL OR component_id = ? OR ? IS NULL)",
+                (ref, component_id, component_id),
+            )
+            return row["id"] if row else None
+        text = clean_text(ref)
+        if not text:
+            return None
+        if text.isdigit():
+            return self._extract_document_id(conn, int(text), component_id)
+        if text.startswith("/uploads/"):
+            text = text[len("/uploads/") :]
+        row = self._fetchone(
+            conn,
+            """
+            SELECT id FROM documents
+            WHERE path = ? AND (component_id IS NULL OR component_id = ? OR ? IS NULL)
+            """,
+            (text, component_id, component_id),
+        )
+        return row["id"] if row else None
+
+    def _delete_document_files(self, rows: Iterable[sqlite3.Row]) -> None:
+        if not self.upload_folder:
+            return
+        for row in rows:
+            relative = row["path"]
+            if not relative:
+                continue
+            target = self.upload_folder / relative
+            try:
+                if target.exists():
+                    target.unlink()
+            except OSError:
+                continue
+
+    def _sync_documents(
+        self,
+        conn: sqlite3.Connection,
+        component_id: int,
+        document_refs: list[Any] | None,
+        *,
+        delete_missing: bool,
+    ) -> None:
+        if document_refs is None:
+            return
+        desired_ids = unique_strings(document_refs)
+        resolved_ids: list[int] = []
+        for ref in desired_ids:
+            document_id = self._extract_document_id(conn, ref, component_id)
+            if document_id is not None:
+                resolved_ids.append(document_id)
+
+        current_rows = self._fetchall(
+            conn,
+            "SELECT id, path FROM documents WHERE component_id = ?",
+            (component_id,),
+        )
+        current_ids = {row["id"] for row in current_rows}
+        keep_ids = set(resolved_ids)
+
+        if resolved_ids:
+            placeholders = ",".join("?" for _ in resolved_ids)
+            conn.execute(
+                f"UPDATE documents SET component_id = ? WHERE id IN ({placeholders})",
+                tuple([component_id] + resolved_ids),
+            )
+
+        if delete_missing:
+            remove_ids = current_ids - keep_ids
+            if remove_ids:
+                placeholders = ",".join("?" for _ in remove_ids)
+                remove_rows = self._fetchall(
+                    conn,
+                    f"SELECT id, path FROM documents WHERE id IN ({placeholders})",
+                    tuple(remove_ids),
+                )
+                self._delete_document_files(remove_rows)
+                conn.execute(
+                    f"DELETE FROM documents WHERE id IN ({placeholders})",
+                    tuple(remove_ids),
+                )
+
     def _sync_images(
         self,
         conn: sqlite3.Connection,
@@ -673,6 +901,9 @@ class InventoryRepository:
         images = payload.get("images")
         if images is not None and not isinstance(images, list):
             images = [images]
+        documents = payload.get("documents")
+        if documents is not None and not isinstance(documents, list):
+            documents = [documents]
         extra_specs = payload.get("extra_specs")
         if extra_specs is not None and not isinstance(extra_specs, str):
             extra_specs = json.dumps(extra_specs, ensure_ascii=False)
@@ -698,6 +929,7 @@ class InventoryRepository:
             "cell_col": payload.get("cell_col"),
             "tags": unique_strings(tags or []),
             "images": images,
+            "documents": documents,
         }
 
     def _append_stock_log(
@@ -799,6 +1031,7 @@ class InventoryRepository:
             primary_map = self._load_primary_image_map(conn, [component_id])
             item = self._component_from_row(row, tags_map, primary_map)
             item["images"] = self._load_images_for_component(conn, component_id)
+            item["documents"] = self._load_documents_for_component(conn, component_id)
             item["stock_logs"] = [
                 {
                     "id": log["id"],
@@ -877,6 +1110,8 @@ class InventoryRepository:
                 self._upsert_tags(conn, merge_target["id"], list(merged_tags))
                 if prepared["images"] is not None:
                     self._sync_images(conn, merge_target["id"], prepared["images"], delete_missing=False)
+                if prepared["documents"] is not None:
+                    self._sync_documents(conn, merge_target["id"], prepared["documents"], delete_missing=False)
                 if prepared["quantity"] != 0:
                     self._append_stock_log(conn, merge_target["id"], prepared["quantity"], new_quantity, "initial", reason_text)
                 component_id = merge_target["id"]
@@ -920,6 +1155,8 @@ class InventoryRepository:
             self._upsert_tags(conn, component_id, prepared["tags"])
             if prepared["images"] is not None:
                 self._sync_images(conn, component_id, prepared["images"], delete_missing=False)
+            if prepared["documents"] is not None:
+                self._sync_documents(conn, component_id, prepared["documents"], delete_missing=False)
             if prepared["quantity"] != 0:
                 self._append_stock_log(conn, component_id, prepared["quantity"], prepared["quantity"], "initial", reason_text)
 
@@ -993,6 +1230,8 @@ class InventoryRepository:
                 self._upsert_tags(conn, component_id, unique_strings(tags or []))
             if "images" in payload:
                 self._sync_images(conn, component_id, payload.get("images"), delete_missing=True)
+            if "documents" in payload:
+                self._sync_documents(conn, component_id, payload.get("documents"), delete_missing=True)
 
             quantity_diff = prepared["quantity"] - current["quantity"]
             if quantity_diff != 0:
@@ -1014,6 +1253,12 @@ class InventoryRepository:
                 (component_id,),
             )
             self._delete_image_files(images)
+            documents = self._fetchall(
+                conn,
+                "SELECT id, path FROM documents WHERE component_id = ?",
+                (component_id,),
+            )
+            self._delete_document_files(documents)
             conn.execute("DELETE FROM components WHERE id = ?", (component_id,))
         self.file_logger.write_backend("COMPONENT", f"删除元器件: ID={component_id}, 名称={component['name']}")
 
@@ -1267,7 +1512,7 @@ class InventoryRepository:
             }
 
     def get_map_data(self) -> dict[str, Any]:
-        return {"boxes": self.list_boxes()}
+        return {"boxes": self.list_boxes(), "cabinets": self.list_cabinets()}
 
     def search_map(self, keyword: str) -> list[dict[str, Any]]:
         keyword = clean_text(keyword)
@@ -1343,6 +1588,52 @@ class InventoryRepository:
             self._delete_image_files([image])
             conn.execute("DELETE FROM images WHERE id = ?", (image_id,))
         self.file_logger.write_backend("IMAGE", f"删除图片: ID={image_id}")
+
+    def create_document_record(
+        self,
+        relative_path: str,
+        original_name: str,
+        mime_type: str | None,
+        file_size: int,
+        component_id: int | None = None,
+    ) -> dict[str, Any]:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO documents (component_id, path, original_name, mime_type, file_size)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (component_id, relative_path, original_name, mime_type, file_size),
+            )
+            document_id = cur.lastrowid
+            row = self._fetchone(
+                conn,
+                "SELECT id, component_id, path, original_name, mime_type, file_size, created_at FROM documents WHERE id = ?",
+                (document_id,),
+            )
+        self.file_logger.write_backend("COMPONENT", f"上传文档: 组件ID={component_id or '未绑定'}, 文件={original_name}")
+        return {
+            "id": row["id"],
+            "component_id": row["component_id"],
+            "name": row["original_name"],
+            "url": self._file_url(row["path"]),
+            "mime_type": row["mime_type"],
+            "file_size": row["file_size"],
+            "created_at": row["created_at"],
+        }
+
+    def delete_document(self, document_id: int) -> None:
+        with self.connect() as conn:
+            document = self._fetchone(
+                conn,
+                "SELECT id, component_id, path, original_name FROM documents WHERE id = ?",
+                (document_id,),
+            )
+            if not document:
+                raise InventoryError("document not found")
+            self._delete_document_files([document])
+            conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
+        self.file_logger.write_backend("COMPONENT", f"删除文档: ID={document_id}, 文件={document['original_name']}")
 
     def bind_nfc(self, box_id: int, uid: str) -> dict[str, Any]:
         uid = clean_text(uid).upper()

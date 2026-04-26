@@ -19,7 +19,8 @@ function app() {
         cell_col: '',
         description: '',
         tagsInput: '',
-        images: []
+        images: [],
+        documents: []
     });
 
     const emptyBoxForm = () => ({
@@ -28,6 +29,15 @@ function app() {
         rows: 4,
         cols: 6,
         color: '#84b59b',
+        cabinet_id: '',
+        cabinet_slot: 0,
+        description: ''
+    });
+
+    const emptyCabinetForm = () => ({
+        id: null,
+        name: '',
+        color: '#8b9aae',
         description: ''
     });
 
@@ -49,6 +59,7 @@ function app() {
 
         categories: [],
         boxes: [],
+        cabinets: [],
         stats: {},
         lowStockList: [],
         recentLogs: [],
@@ -65,19 +76,28 @@ function app() {
         stockForm: { type: 'in', quantity: 1, reason: '' },
 
         boxForm: emptyBoxForm(),
+        cabinetForm: emptyCabinetForm(),
         currentBox: null,
         boxGrid: [],
 
         mapBoxes: [],
+        mapCabinets: [],
+        expandedCabinets: [],
         mapHighlights: [],
         mapState: { panX: 48, panY: 48, scale: 1 },
         mapDirty: false,
         draggingBox: null,
+        draggingCabinet: null,
         dragState: null,
 
         bomFile: null,
         bomData: null,
         bomStats: { total: 0, matched: 0, shortage: 0, unmatched: 0 },
+        bomSelectedRows: [],
+        bomManualRowIndex: null,
+        bomManualKeyword: '',
+        bomManualResults: [],
+        bomManualLoading: false,
 
         nfcBoxId: '',
         nfcStatus: null,
@@ -87,15 +107,16 @@ function app() {
         scannerError: '',
 
         async initApp() {
-            await Promise.all([this.loadCategories(), this.loadBoxes()]);
+            await Promise.all([this.loadCategories(), this.loadCabinets(), this.loadBoxes()]);
             await this.loadDashboard();
+            await this.openComponentFromUrl();
         },
 
         async navigate(pageId) {
             this.page = pageId;
             if (pageId === 'dashboard') await this.loadDashboard();
             if (pageId === 'components') await this.loadComponents();
-            if (pageId === 'boxes') await this.loadBoxes();
+            if (pageId === 'boxes') await Promise.all([this.loadCabinets(), this.loadBoxes()]);
             if (pageId === 'map') await this.loadMapData();
             if (pageId === 'nfc') await this.loadBoxes();
         },
@@ -178,6 +199,14 @@ function app() {
             }
         },
 
+        async loadCabinets() {
+            try {
+                this.cabinets = await api.get('/api/cabinets');
+            } catch (err) {
+                this.toast('加载柜子失败：' + err.message, 'error');
+            }
+        },
+
         async loadComponents() {
             try {
                 this.loading = true;
@@ -236,7 +265,13 @@ function app() {
                     ...emptyComponentForm(),
                     ...item,
                     tagsInput: (item.tags || []).join(', '),
-                    images: (item.images || []).map((img) => ({ id: img.id, url: img.url || img.thumbnail_url }))
+                    images: (item.images || []).map((img) => ({ id: img.id, url: img.url || img.thumbnail_url })),
+                    documents: (item.documents || []).map((doc) => ({
+                        id: doc.id,
+                        name: doc.name,
+                        url: doc.url,
+                        file_size: doc.file_size
+                    }))
                 };
             } else {
                 this.componentForm = emptyComponentForm();
@@ -313,6 +348,31 @@ function app() {
             this.componentForm.images.splice(index, 1);
         },
 
+        async uploadComponentDocument(file) {
+            if (!file) return;
+            try {
+                this.loadingOverlay = true;
+                const document = await uploadFile('/api/documents/upload', file);
+                this.componentForm.documents.push(document);
+            } catch (err) {
+                this.toast('文档上传失败：' + err.message, 'error');
+            } finally {
+                this.loadingOverlay = false;
+            }
+        },
+
+        removeDocument(index) {
+            this.componentForm.documents.splice(index, 1);
+        },
+
+        formatFileSize(size) {
+            const bytes = Number(size || 0);
+            if (!bytes) return '-';
+            if (bytes < 1024) return `${bytes} B`;
+            if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+            return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+        },
+
         async saveComponent() {
             const form = { ...this.componentForm };
             if (!form.name.trim()) {
@@ -322,6 +382,7 @@ function app() {
 
             form.tags = String(form.tagsInput || '').split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
             form.images = (form.images || []).map((img) => img.id || img.url).filter(Boolean);
+            form.documents = (form.documents || []).map((doc) => doc.id || doc.url).filter(Boolean);
             form.category_id = form.category_id || null;
             form.box_id = form.box_id || null;
             form.cell_row = form.box_id ? (form.cell_row || null) : null;
@@ -358,6 +419,48 @@ function app() {
             } finally {
                 this.loadingOverlay = false;
             }
+        },
+
+        async openComponentFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            const componentId = Number(params.get('component') || params.get('component_id') || 0);
+            if (!componentId) return;
+            this.page = 'components';
+            await this.loadComponents();
+            await this.openComponentDetail(componentId);
+        },
+
+        componentQrUrl(id) {
+            return `/api/components/${id}/qr.svg`;
+        },
+
+        openComponentQrLabels(ids = null) {
+            const params = new URLSearchParams();
+            const componentIds = (ids && ids.length ? ids : []).filter(Boolean);
+            if (componentIds.length) {
+                params.set('ids', componentIds.join(','));
+            } else {
+                if (!this.componentPagination.total) {
+                    this.toast('没有可生成二维码的元器件', 'warning');
+                    return;
+                }
+                params.set('page', '1');
+                params.set('page_size', '500');
+                if (this.searchKeyword.trim()) params.set('keyword', this.searchKeyword.trim());
+                if (this.filterCategory) params.set('category_id', this.filterCategory);
+                if (this.filterBox) params.set('box_id', this.filterBox);
+                if (this.filterStock === 'low') params.set('low_stock', '1');
+            }
+            if (!params.toString()) {
+                this.toast('没有可生成二维码的元器件', 'warning');
+                return;
+            }
+            window.open(`/components/qr-labels?${params.toString()}`, '_blank');
+        },
+
+        openCurrentComponentQrLabel() {
+            if (!this.currentComponent) return;
+            this.openComponentQrLabels([this.currentComponent.id]);
         },
 
         editCurrentComponent() {
@@ -422,6 +525,8 @@ function app() {
                 rows: box.rows || 4,
                 cols: box.cols || 6,
                 color: box.color || '#84b59b',
+                cabinet_id: box.cabinet_id || '',
+                cabinet_slot: box.cabinet_slot || 0,
                 description: box.description || ''
             } : emptyBoxForm();
             this.modal = 'box-form';
@@ -432,14 +537,22 @@ function app() {
         },
 
         async saveBox() {
-            const { id, name, rows, cols, color, description } = this.boxForm;
+            const { id, name, rows, cols, color, cabinet_id, cabinet_slot, description } = this.boxForm;
             if (!String(name || '').trim()) {
                 this.toast('请填写收纳盒名称', 'warning');
                 return;
             }
             try {
                 this.loadingOverlay = true;
-                const payload = { name: name.trim(), rows: Number(rows), cols: Number(cols), color, description: description || null };
+                const payload = {
+                    name: name.trim(),
+                    rows: Number(rows),
+                    cols: Number(cols),
+                    color,
+                    cabinet_id: cabinet_id ? Number(cabinet_id) : null,
+                    cabinet_slot: Number(cabinet_slot || 0),
+                    description: description || null
+                };
                 if (id) {
                     await api.put(`/api/boxes/${id}`, payload);
                     logAction('UPDATE', `更新收纳盒 ID=${id} 名称=${payload.name}`);
@@ -450,7 +563,7 @@ function app() {
                     this.toast('收纳盒已创建', 'success');
                 }
                 this.closeModal();
-                await Promise.all([this.loadBoxes(), this.loadDashboard()]);
+                await Promise.all([this.loadBoxes(), this.loadCabinets(), this.loadDashboard()]);
                 if (this.currentBox?.id === id) await this.viewBoxDetail(id);
                 if (this.page === 'map') await this.loadMapData();
             } catch (err) {
@@ -476,6 +589,58 @@ function app() {
                 await Promise.all([this.loadBoxes(), this.loadDashboard()]);
             } catch (err) {
                 this.toast('删除收纳盒失败：' + err.message, 'error');
+            } finally {
+                this.loadingOverlay = false;
+            }
+        },
+
+        openCabinetForm(cabinet = null) {
+            this.cabinetForm = cabinet ? {
+                id: cabinet.id,
+                name: cabinet.name || '',
+                color: cabinet.color || '#8b9aae',
+                description: cabinet.description || ''
+            } : emptyCabinetForm();
+            this.modal = 'cabinet-form';
+        },
+
+        async saveCabinet() {
+            const { id, name, color, description } = this.cabinetForm;
+            if (!String(name || '').trim()) {
+                this.toast('请填写柜子名称', 'warning');
+                return;
+            }
+            try {
+                this.loadingOverlay = true;
+                const payload = { name: name.trim(), color, description: description || null };
+                if (id) {
+                    await api.put(`/api/cabinets/${id}`, payload);
+                    this.toast('柜子已更新', 'success');
+                } else {
+                    await api.post('/api/cabinets', payload);
+                    this.toast('柜子已创建', 'success');
+                }
+                this.closeModal();
+                await Promise.all([this.loadCabinets(), this.loadBoxes()]);
+                if (this.page === 'map') await this.loadMapData();
+            } catch (err) {
+                this.toast('保存柜子失败：' + err.message, 'error');
+            } finally {
+                this.loadingOverlay = false;
+            }
+        },
+
+        async deleteCabinet(cabinet) {
+            if (!cabinet?.id) return;
+            if (!confirm(`确定删除柜子「${cabinet.name}」吗？柜子里有收纳盒时会被后端拒绝。`)) return;
+            try {
+                this.loadingOverlay = true;
+                await api.del(`/api/cabinets/${cabinet.id}`);
+                this.toast('柜子已删除', 'success');
+                await Promise.all([this.loadCabinets(), this.loadBoxes()]);
+                if (this.page === 'map') await this.loadMapData();
+            } catch (err) {
+                this.toast('删除柜子失败：' + err.message, 'error');
             } finally {
                 this.loadingOverlay = false;
             }
@@ -512,7 +677,7 @@ function app() {
             try {
                 this.loadingOverlay = true;
                 const result = await uploadFile('/api/components/import', file);
-                logAction('IMPORT', `Excel 导入完成 success=${result.success || 0} failed=${result.failed || 0}`);
+                logAction('IMPORT', `元器件导入完成 type=${result.file_type || '-'} success=${result.success || 0} failed=${result.failed || 0}`);
                 this.toast(`导入完成：成功 ${result.success || 0} 条，失败 ${result.failed || 0} 条`, result.failed ? 'warning' : 'success');
                 await Promise.all([this.loadComponents(), this.loadBoxes(), this.loadDashboard()]);
             } catch (err) {
@@ -541,7 +706,7 @@ function app() {
                 const data = await api.get('/api/map');
                 const cellSize = 22;
                 const gap = 4;
-                this.mapBoxes = (data.boxes || []).map((box, index) => ({
+                const allBoxes = (data.boxes || []).map((box, index) => ({
                     ...box,
                     position_x: Number(box.position_x ?? (index % 4) * 210),
                     position_y: Number(box.position_y ?? Math.floor(index / 4) * 170),
@@ -552,6 +717,24 @@ function app() {
                         occupied: cellIndex < Number(box.occupied_count || 0)
                     })),
                     pickLabels: []
+                }));
+                const boxesByCabinet = allBoxes.reduce((result, box) => {
+                    if (box.cabinet_id) {
+                        const key = String(box.cabinet_id);
+                        if (!result[key]) result[key] = [];
+                        result[key].push(box);
+                    }
+                    return result;
+                }, {});
+                this.mapBoxes = allBoxes.filter((box) => !box.cabinet_id);
+                this.mapCabinets = (data.cabinets || []).map((cabinet, index) => ({
+                    ...cabinet,
+                    position_x: Number(cabinet.position_x ?? (index % 3) * 260),
+                    position_y: Number(cabinet.position_y ?? Math.floor(index / 3) * 210),
+                    mapWidth: 220,
+                    mapHeight: 168,
+                    boxes: (boxesByCabinet[String(cabinet.id)] || [])
+                        .sort((a, b) => Number(a.cabinet_slot || 0) - Number(b.cabinet_slot || 0) || String(a.name).localeCompare(String(b.name)))
                 }));
                 this.updateMapPickLabels();
             } catch (err) {
@@ -574,7 +757,7 @@ function app() {
         },
 
         panMapStart(event) {
-            if (event.target.closest('.map-box')) return;
+            if (event.target.closest('.map-box') || event.target.closest('.map-cabinet')) return;
             if (event.touches && event.touches.length === 2) {
                 if (event.cancelable) event.preventDefault();
                 const center = this.touchCenter(event);
@@ -662,11 +845,67 @@ function app() {
             this.mapDirty = true;
         },
 
+        startDragCabinet(cabinet, event) {
+            if (event.touches && event.touches.length > 1) return;
+            event.stopPropagation();
+            const point = this.eventPoint(event);
+            this.draggingCabinet = cabinet;
+            this.dragState = {
+                type: 'cabinet',
+                id: cabinet.id,
+                x: point.x,
+                y: point.y,
+                startX: point.x,
+                startY: point.y,
+                moved: false
+            };
+            this._dragCabinetMove = this.dragCabinetMove.bind(this);
+            this._endPointerWork = this.endPointerWork.bind(this);
+            window.addEventListener('mousemove', this._dragCabinetMove);
+            window.addEventListener('mouseup', this._endPointerWork);
+            window.addEventListener('touchmove', this._dragCabinetMove, { passive: false });
+            window.addEventListener('touchend', this._endPointerWork);
+        },
+
+        dragCabinetMove(event) {
+            if (!this.dragState || this.dragState.type !== 'cabinet' || !this.draggingCabinet) return;
+            if (event.cancelable) event.preventDefault();
+            const point = this.eventPoint(event);
+            const dx = (point.x - this.dragState.x) / this.mapState.scale;
+            const dy = (point.y - this.dragState.y) / this.mapState.scale;
+            if (Math.abs(point.x - this.dragState.startX) > 4 || Math.abs(point.y - this.dragState.startY) > 4) {
+                this.dragState.moved = true;
+            }
+            this.draggingCabinet.position_x = Number(this.draggingCabinet.position_x || 0) + dx;
+            this.draggingCabinet.position_y = Number(this.draggingCabinet.position_y || 0) + dy;
+            this.dragState.x = point.x;
+            this.dragState.y = point.y;
+            this.mapDirty = true;
+        },
+
+        toggleCabinet(cabinet) {
+            const id = cabinet?.id;
+            if (!id) return;
+            if (this.expandedCabinets.includes(id)) {
+                this.expandedCabinets = this.expandedCabinets.filter((item) => item !== id);
+            } else {
+                this.expandedCabinets = [...this.expandedCabinets, id];
+            }
+        },
+
+        isCabinetExpanded(cabinet) {
+            return this.expandedCabinets.includes(cabinet?.id);
+        },
+
         endPointerWork() {
             if (this.dragState?.type === 'box' && this.draggingBox && !this.dragState.moved) {
                 this.viewBoxDetail(this.draggingBox.id);
             }
+            if (this.dragState?.type === 'cabinet' && this.draggingCabinet && !this.dragState.moved) {
+                this.toggleCabinet(this.draggingCabinet);
+            }
             this.draggingBox = null;
+            this.draggingCabinet = null;
             this.dragState = null;
             if (this._panMapMove) {
                 window.removeEventListener('mousemove', this._panMapMove);
@@ -676,6 +915,10 @@ function app() {
                 window.removeEventListener('mousemove', this._dragBoxMove);
                 window.removeEventListener('touchmove', this._dragBoxMove);
             }
+            if (this._dragCabinetMove) {
+                window.removeEventListener('mousemove', this._dragCabinetMove);
+                window.removeEventListener('touchmove', this._dragCabinetMove);
+            }
             if (this._endPointerWork) {
                 window.removeEventListener('mouseup', this._endPointerWork);
                 window.removeEventListener('touchend', this._endPointerWork);
@@ -683,6 +926,7 @@ function app() {
             }
             this._panMapMove = null;
             this._dragBoxMove = null;
+            this._dragCabinetMove = null;
             this._endPointerWork = null;
         },
 
@@ -707,10 +951,16 @@ function app() {
         async saveMapLayout() {
             try {
                 this.loadingOverlay = true;
-                await Promise.all(this.mapBoxes.map((box) => api.put(`/api/boxes/${box.id}/layout`, {
-                    position_x: Math.round(Number(box.position_x || 0)),
-                    position_y: Math.round(Number(box.position_y || 0))
-                })));
+                await Promise.all([
+                    ...this.mapBoxes.map((box) => api.put(`/api/boxes/${box.id}/layout`, {
+                        position_x: Math.round(Number(box.position_x || 0)),
+                        position_y: Math.round(Number(box.position_y || 0))
+                    })),
+                    ...this.mapCabinets.map((cabinet) => api.put(`/api/cabinets/${cabinet.id}/layout`, {
+                        position_x: Math.round(Number(cabinet.position_x || 0)),
+                        position_y: Math.round(Number(cabinet.position_y || 0))
+                    }))
+                ]);
                 this.mapDirty = false;
                 logAction('UPDATE', '保存地图布局');
                 this.toast('地图布局已保存', 'success');
@@ -727,6 +977,7 @@ function app() {
                 this.loadingOverlay = true;
                 const data = await uploadFile('/api/bom/import', file);
                 this.bomData = data;
+                this.bomSelectedRows = [];
                 this.computeBomStats();
                 logAction('BOM', `导入 BOM ${data.project_name || file.name}`);
                 this.toast('BOM 已解析', 'success');
@@ -735,6 +986,123 @@ function app() {
             } finally {
                 this.loadingOverlay = false;
             }
+        },
+
+        async openBomMatcher(index) {
+            if (!this.bomData?.items?.[index]) return;
+            const item = this.bomData.items[index];
+            this.bomManualRowIndex = index;
+            this.bomManualKeyword = [item.comment, item.footprint].filter(Boolean).join(' ').trim();
+            this.bomManualResults = [];
+            this.modal = 'bom-match';
+            await this.searchBomComponents();
+        },
+
+        async searchBomComponents() {
+            try {
+                this.bomManualLoading = true;
+                const data = await api.get('/api/components', {
+                    keyword: this.bomManualKeyword || '',
+                    page: 1,
+                    page_size: 30
+                });
+                this.bomManualResults = data?.items || [];
+            } catch (err) {
+                this.toast('搜索元器件失败：' + err.message, 'error');
+            } finally {
+                this.bomManualLoading = false;
+            }
+        },
+
+        manualMatchPayload(component) {
+            if (!component) return null;
+            return {
+                id: component.id,
+                name: component.name,
+                model: component.model,
+                package: component.package,
+                quantity: component.quantity,
+                box_id: component.box_id,
+                box_name: component.box_name,
+                cell_label: component.cell_label,
+                row: component.grid_row,
+                col: component.grid_col
+            };
+        },
+
+        assignBomComponent(component) {
+            if (this.bomManualRowIndex === null || !this.bomData?.items?.[this.bomManualRowIndex]) return;
+            this.bomData.items[this.bomManualRowIndex].matched = this.manualMatchPayload(component);
+            this.bomData.items[this.bomManualRowIndex].match_level = 'manual';
+            this.computeBomStats();
+            this.updateMapPickLabels();
+            this.toast('已手动指定元器件', 'success');
+            this.closeModal();
+        },
+
+        clearBomMatch(index = this.bomManualRowIndex) {
+            if (index === null || !this.bomData?.items?.[index]) return;
+            this.bomData.items[index].matched = null;
+            this.bomData.items[index].match_level = null;
+            this.computeBomStats();
+            this.updateMapPickLabels();
+            this.toast('已清除该行匹配', 'success');
+            if (this.modal === 'bom-match') this.closeModal();
+        },
+
+        bomMatchLabel(item) {
+            if (!item?.match_level) return '';
+            return item.match_level === 'manual' ? '手动' : '自动';
+        },
+
+        removeBomItem(index) {
+            if (!this.bomData?.items?.[index]) return;
+            const item = this.bomData.items[index];
+            const label = item.designator || item.comment || `第 ${index + 1} 行`;
+            if (!confirm(`确定从当前 BOM 中删除「${label}」吗？`)) return;
+            this.bomData.items.splice(index, 1);
+            this.bomSelectedRows = this.bomSelectedRows
+                .filter((rowIndex) => rowIndex !== index)
+                .map((rowIndex) => rowIndex > index ? rowIndex - 1 : rowIndex);
+            this.bomData.total_types = this.bomData.items.length;
+            this.computeBomStats();
+            this.updateMapPickLabels();
+            this.toast('已从 BOM 中删除该行', 'success');
+        },
+
+        toggleBomRowSelection(index, checked) {
+            if (checked) {
+                if (!this.bomSelectedRows.includes(index)) {
+                    this.bomSelectedRows = [...this.bomSelectedRows, index].sort((a, b) => a - b);
+                }
+                return;
+            }
+            this.bomSelectedRows = this.bomSelectedRows.filter((rowIndex) => rowIndex !== index);
+        },
+
+        toggleAllBomRows(checked) {
+            const total = this.bomData?.items?.length || 0;
+            this.bomSelectedRows = checked ? Array.from({ length: total }, (_, index) => index) : [];
+        },
+
+        allBomRowsSelected() {
+            const total = this.bomData?.items?.length || 0;
+            return total > 0 && this.bomSelectedRows.length === total;
+        },
+
+        removeSelectedBomItems() {
+            if (!this.bomSelectedRows.length) {
+                this.toast('请先选择要删除的 BOM 行', 'warning');
+                return;
+            }
+            if (!confirm(`确定从当前 BOM 中删除选中的 ${this.bomSelectedRows.length} 行吗？`)) return;
+            const selected = new Set(this.bomSelectedRows);
+            this.bomData.items = this.bomData.items.filter((_, index) => !selected.has(index));
+            this.bomSelectedRows = [];
+            this.bomData.total_types = this.bomData.items.length;
+            this.computeBomStats();
+            this.updateMapPickLabels();
+            this.toast('已删除选中的 BOM 行', 'success');
         },
 
         computeBomStats() {
@@ -807,6 +1175,13 @@ function app() {
                 ...box,
                 pickLabels: order.includes(box.id) ? [{ num: order.indexOf(box.id) + 1 }] : []
             }));
+            this.mapCabinets = this.mapCabinets.map((cabinet) => ({
+                ...cabinet,
+                boxes: (cabinet.boxes || []).map((box) => ({
+                    ...box,
+                    pickLabels: order.includes(box.id) ? [{ num: order.indexOf(box.id) + 1 }] : []
+                }))
+            }));
         },
 
         hexToRgb(color) {
@@ -847,6 +1222,22 @@ function app() {
                 `--box-accent-pale:${this.rgba(color, 0.10)}`,
                 `--box-shadow-color:${this.rgba(color, 0.26)}`,
                 `--box-accent-border:${this.rgba(color, 0.55)}`
+            ].join(';');
+        },
+
+        getMapCabinetStyle(cabinet) {
+            const color = cabinet.color || '#8b9aae';
+            const open = this.isCabinetExpanded(cabinet);
+            return [
+                `left:${cabinet.position_x || 0}px`,
+                `top:${cabinet.position_y || 0}px`,
+                `width:${cabinet.mapWidth || 220}px`,
+                `height:${open ? 292 : (cabinet.mapHeight || 168)}px`,
+                `--cabinet-accent:${color}`,
+                `--cabinet-accent-light:${this.shadeColor(color, 0.22)}`,
+                `--cabinet-accent-deep:${this.shadeColor(color, -0.25)}`,
+                `--cabinet-accent-soft:${this.rgba(color, 0.18)}`,
+                `--cabinet-shadow-color:${this.rgba(color, 0.24)}`
             ].join(';');
         },
 
@@ -925,6 +1316,13 @@ function app() {
         },
 
         autoFillFromScan(text) {
+            const componentId = this.componentIdFromScan(text);
+            if (componentId) {
+                this.page = 'components';
+                this.loadComponents();
+                this.openComponentDetail(componentId);
+                return;
+            }
             this.openComponentForm();
             const parts = String(text || '').split(',').map((part) => part.trim()).filter(Boolean);
             if (parts.length > 1) {
@@ -933,6 +1331,21 @@ function app() {
                 this.componentForm.model = parts[2] || '';
             } else {
                 this.componentForm.name = String(text || '').trim();
+            }
+        },
+
+        componentIdFromScan(text) {
+            const raw = String(text || '').trim();
+            if (!raw) return 0;
+            try {
+                const url = new URL(raw, window.location.origin);
+                const id = Number(url.searchParams.get('component') || url.searchParams.get('component_id') || 0);
+                if (id > 0) return id;
+                const match = url.pathname.match(/^\/components?\/(\d+)$/);
+                return match ? Number(match[1]) : 0;
+            } catch (_) {
+                const match = raw.match(/(?:component|component_id)\s*[:=]\s*(\d+)/i);
+                return match ? Number(match[1]) : 0;
             }
         },
 

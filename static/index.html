@@ -148,7 +148,12 @@
                             <h2>元器件列表</h2>
                             <p>按分类、盒子和库存状态筛选，也可以扫码快速创建。</p>
                         </div>
-                        <button class="btn btn-primary" @click="openComponentForm()">新增元器件</button>
+                        <div class="toolbar-actions">
+                            <button class="btn btn-secondary" @click="importExcel()">导入 CSV/XLSX</button>
+                            <button class="btn btn-secondary" @click="exportExcel()">导出 XLSX</button>
+                            <button class="btn btn-secondary" @click="openComponentQrLabels()">批量二维码</button>
+                            <button class="btn btn-primary" @click="openComponentForm()">新增元器件</button>
+                        </div>
                     </div>
                     <div class="filter-ribbon">
                         <div class="filter-group">
@@ -265,6 +270,7 @@
                             <p>拖动盒子调整位置，滚轮或按钮缩放视图。</p>
                         </div>
                         <div class="toolbar-actions">
+                            <button class="btn btn-secondary" @click="openCabinetForm()">新增柜子</button>
                             <button class="btn btn-secondary" @click="zoomMap(-0.1)">缩小</button>
                             <button class="btn btn-secondary" @click="zoomMap(0.1)">放大</button>
                             <button class="btn btn-secondary" @click="resetMapView()">重置</button>
@@ -273,12 +279,38 @@
                     </div>
                     <div class="map-workbench">
                         <div class="map-legend">
+                            <span class="legend-item"><i class="legend-swatch" style="background:#8b9aae"></i>柜子</span>
                             <span class="legend-item"><i class="legend-swatch" style="background:#84b59b"></i>收纳盒颜色</span>
                             <span class="legend-item"><i class="legend-swatch" style="background:#1f7a6c"></i>BOM 高亮</span>
                             <span class="legend-item">缩放 <b x-text="Math.round(mapState.scale * 100) + '%'"></b></span>
                         </div>
                         <div id="map-container" class="map-container" @mousedown="panMapStart($event)" @touchstart="panMapStart($event)" @wheel.prevent="zoomMap($event.deltaY > 0 ? -0.08 : 0.08)">
                             <div id="map-layer" class="map-layer" :style="mapViewportStyle()">
+                                <template x-for="cabinet in mapCabinets" :key="'cabinet-' + cabinet.id">
+                                    <div class="map-cabinet" :class="{ open: isCabinetExpanded(cabinet) }" :style="getMapCabinetStyle(cabinet)" @mousedown="startDragCabinet(cabinet, $event)" @touchstart="startDragCabinet(cabinet, $event)">
+                                        <div class="cabinet-body">
+                                            <div class="cabinet-top">
+                                                <strong x-text="cabinet.name"></strong>
+                                                <span><span x-text="cabinet.box_count || 0"></span> 盒</span>
+                                            </div>
+                                            <button class="cabinet-edit" @click.stop="openCabinetForm(cabinet)">编辑</button>
+                                            <button class="cabinet-delete" @click.stop="deleteCabinet(cabinet)">删除</button>
+                                            <div class="cabinet-handle"></div>
+                                        </div>
+                                        <div class="cabinet-drawer">
+                                            <template x-for="box in cabinet.boxes" :key="'cabinet-box-' + box.id">
+                                                <button class="cabinet-box-model" :class="{ highlight: mapHighlights.includes(box.id) }" :style="getMapBoxStyle({ ...box, position_x: 0, position_y: 0, mapWidth: 78, mapHeight: 58 })" @click.stop="viewBoxDetail(box.id)">
+                                                    <span class="cabinet-box-lid"></span>
+                                                    <span class="cabinet-box-name" x-text="box.name"></span>
+                                                    <template x-for="label in box.pickLabels" :key="label.num">
+                                                        <i class="pick-label mini" x-text="label.num"></i>
+                                                    </template>
+                                                </button>
+                                            </template>
+                                            <div class="cabinet-empty" x-show="(cabinet.boxes || []).length === 0">暂无收纳盒</div>
+                                        </div>
+                                    </div>
+                                </template>
                                 <template x-for="box in mapBoxes" :key="box.id">
                                     <div class="map-box" :class="{ highlight: mapHighlights.includes(box.id) }" :style="getMapBoxStyle(box)" @mousedown="startDragBox(box, $event)" @touchstart="startDragBox(box, $event)">
                                         <div class="map-box-inner" :style="`grid-template-columns: repeat(${box.cols}, 1fr);`">
@@ -325,22 +357,39 @@
                             <div class="mini-panel bom-number-panel"><span>缺料</span><strong x-text="bomStats.shortage"></strong></div>
                             <div class="mini-panel bom-number-panel"><span>未匹配</span><strong x-text="bomStats.unmatched"></strong></div>
                         </div>
+                        <div class="bom-bulkbar">
+                            <label class="bom-select-all">
+                                <input type="checkbox" :checked="allBomRowsSelected()" @change="toggleAllBomRows($event.target.checked)">
+                                <span>全选</span>
+                            </label>
+                            <span>已选 <b x-text="bomSelectedRows.length"></b> 行</span>
+                            <button class="btn btn-danger" :disabled="bomSelectedRows.length === 0" @click="removeSelectedBomItems()">删除选中</button>
+                        </div>
                         <div class="table-wrap bom-table-shell">
                             <table class="bom-table">
-                                <thead><tr><th>位号</th><th>值 / 名称</th><th>封装</th><th>需求</th><th>匹配库存</th><th>位置</th><th></th></tr></thead>
+                                <thead><tr><th></th><th>位号</th><th>值 / 名称</th><th>封装</th><th>需求</th><th>匹配库存</th><th>位置</th><th></th></tr></thead>
                                 <tbody>
                                     <template x-for="(item, idx) in bomData?.items || []" :key="idx">
-                                        <tr>
+                                        <tr :class="{ selected: bomSelectedRows.includes(idx) }">
+                                            <td class="bom-select-cell"><input type="checkbox" :checked="bomSelectedRows.includes(idx)" @change="toggleBomRowSelection(idx, $event.target.checked)"></td>
                                             <td class="bom-designator" x-text="item.designator"></td>
                                             <td class="bom-name-cell" x-text="item.comment"></td>
                                             <td class="bom-footprint" x-text="item.footprint"></td>
                                             <td class="bom-qty" x-text="item.quantity_needed"></td>
                                             <td class="bom-match-cell">
                                                 <span class="bom-match-name" x-show="item.matched" x-text="`${item.matched.name} (${item.matched.quantity})`"></span>
+                                                <small class="bom-match-source" x-show="item.matched" x-text="bomMatchLabel(item)"></small>
                                                 <span x-show="!item.matched" class="text-danger">未匹配</span>
                                             </td>
                                             <td class="bom-location" x-text="item.matched ? `${item.matched.box_name || '-'} / ${item.matched.cell_label || '-'}` : '-'"></td>
-                                            <td class="bom-row-action"><button class="table-link" x-show="item.matched?.box_id" @click="gotoMapHighlight(item.matched.box_id)">地图</button></td>
+                                            <td class="bom-row-action">
+                                                <div class="bom-action-buttons">
+                                                    <button class="table-link" @click="openBomMatcher(idx)">指定</button>
+                                                    <button class="table-link danger-link" x-show="item.matched" @click="clearBomMatch(idx)">清除</button>
+                                                    <button class="table-link" x-show="item.matched?.box_id" @click="gotoMapHighlight(item.matched.box_id)">地图</button>
+                                                    <button class="table-link danger-link" @click="removeBomItem(idx)">删除</button>
+                                                </div>
+                                            </td>
                                         </tr>
                                     </template>
                                 </tbody>
@@ -401,7 +450,7 @@
         </button>
     </nav>
 
-    <input type="file" accept=".xlsx,.xls" class="hidden" x-ref="importInput" @change="handleImportFile($event.target.files[0]); $event.target.value=''">
+    <input type="file" accept=".csv,.xlsx" class="hidden" x-ref="importInput" @change="handleImportFile($event.target.files[0]); $event.target.value=''">
 
     <div x-show="modal === 'component-form'" x-cloak class="modal-overlay" @click.self="closeModal()">
         <div class="modal-panel modal-sheet-form" x-ref="componentFormPanel">
@@ -448,6 +497,24 @@
                         <label class="image-uploader">+<input type="file" accept="image/*" @change="uploadComponentImage($event.target.files[0]); $event.target.value=''"></label>
                     </div>
                 </div>
+                <div>
+                    <div class="section-mini-title">相关文档</div>
+                    <div class="document-list">
+                        <template x-for="(doc, index) in componentForm.documents" :key="doc.id || index">
+                            <div class="document-row">
+                                <a :href="doc.url" target="_blank" rel="noopener">
+                                    <span class="document-icon">DOC</span>
+                                    <span>
+                                        <strong x-text="doc.name || '未命名文档'"></strong>
+                                        <small x-text="formatFileSize(doc.file_size)"></small>
+                                    </span>
+                                </a>
+                                <button class="table-link danger-link" @click="removeDocument(index)">删除</button>
+                            </div>
+                        </template>
+                        <label class="document-uploader">上传文档<input type="file" class="hidden" accept=".pdf,.txt,.md,.csv,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.zip" @change="uploadComponentDocument($event.target.files[0]); $event.target.value=''"></label>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-primary" @click="saveComponent()">保存</button>
@@ -491,9 +558,26 @@
                     </template>
                 </div>
                 <p class="description" x-show="currentComponent?.description" x-text="currentComponent?.description"></p>
+                <div class="modal-soft-section" x-show="(currentComponent?.documents || []).length">
+                    <div class="section-mini-title">相关文档</div>
+                    <div class="document-list">
+                        <template x-for="doc in currentComponent?.documents || []" :key="doc.id">
+                            <div class="document-row">
+                                <a :href="doc.url" target="_blank" rel="noopener">
+                                    <span class="document-icon">DOC</span>
+                                    <span>
+                                        <strong x-text="doc.name || '未命名文档'"></strong>
+                                        <small x-text="formatFileSize(doc.file_size)"></small>
+                                    </span>
+                                </a>
+                            </div>
+                        </template>
+                    </div>
+                </div>
                 <div class="toolbar-actions">
                     <button class="btn btn-success" @click="openStockModal('in')">入库</button>
                     <button class="btn btn-danger" @click="openStockModal('out')">出库</button>
+                    <button class="btn btn-secondary" @click="openCurrentComponentQrLabel()">二维码</button>
                     <button class="btn btn-primary" @click="editCurrentComponent()">编辑</button>
                     <button class="btn btn-secondary danger-link" @click="deleteCurrentComponent()">删除</button>
                 </div>
@@ -532,6 +616,15 @@
                 </div>
                 <label>颜色<input type="color" x-model="boxForm.color" class="color-input"></label>
                 <label>注释<textarea rows="3" x-model="boxForm.description" placeholder="记录这个收纳盒的用途、位置或其他备注"></textarea></label>
+                <label>所属柜子
+                    <select x-model="boxForm.cabinet_id">
+                        <option value="">地图独立摆放</option>
+                        <template x-for="cabinet in cabinets" :key="cabinet.id">
+                            <option :value="cabinet.id" x-text="cabinet.name"></option>
+                        </template>
+                    </select>
+                </label>
+                <label x-show="boxForm.cabinet_id">柜内排序<input type="number" min="0" x-model.number="boxForm.cabinet_slot" placeholder="数字越小越靠前"></label>
                 <div class="box-preview" :style="`--box-accent:${boxForm.color}; grid-template-columns: repeat(${Math.min(boxForm.cols || 4, 8)}, 1fr);`">
                     <template x-for="i in Math.min((boxForm.rows || 4) * (boxForm.cols || 4), 64)" :key="i">
                         <span></span>
@@ -540,6 +633,67 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-primary" @click="saveBox()">保存</button>
+                <button class="btn btn-secondary" @click="closeModal()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="modal === 'bom-match'" x-cloak class="modal-overlay" @click.self="closeModal()">
+        <div class="modal-panel bom-match-panel">
+            <div class="modal-header">
+                <h3>手动指定元器件</h3>
+                <button class="icon-button round" @click="closeModal()" title="关闭"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+            </div>
+            <div class="modal-body form-stack">
+                <div class="bom-match-target" x-show="bomManualRowIndex !== null">
+                    <span>当前 BOM 行</span>
+                    <strong x-text="bomData?.items?.[bomManualRowIndex]?.comment || '-'"></strong>
+                    <small x-text="[bomData?.items?.[bomManualRowIndex]?.designator, bomData?.items?.[bomManualRowIndex]?.footprint].filter(Boolean).join(' / ')"></small>
+                </div>
+                <div class="bom-match-search">
+                    <input x-model="bomManualKeyword" @keydown.enter.prevent="searchBomComponents()" placeholder="搜索名称、型号、标称值或描述">
+                    <button class="btn btn-secondary" @click="searchBomComponents()">搜索</button>
+                </div>
+                <div class="bom-match-results">
+                    <div class="empty-state" x-show="bomManualLoading">搜索中...</div>
+                    <template x-for="component in bomManualResults" :key="component.id">
+                        <button class="bom-candidate-row" @click="assignBomComponent(component)">
+                            <div>
+                                <strong x-text="component.name"></strong>
+                                <span x-text="[component.model, component.package, component.nominal_value].filter(Boolean).join(' / ') || '无规格信息'"></span>
+                            </div>
+                            <div class="bom-candidate-meta">
+                                <b x-text="component.quantity"></b>
+                                <span x-text="component.box_name ? `${component.box_name} / ${component.cell_label || '-'}` : '未入盒'"></span>
+                            </div>
+                        </button>
+                    </template>
+                    <div class="empty-state" x-show="!bomManualLoading && bomManualResults.length === 0">没有找到元器件</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @click="clearBomMatch()">清除匹配</button>
+                <button class="btn btn-primary" @click="closeModal()">完成</button>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="modal === 'cabinet-form'" x-cloak class="modal-overlay" @click.self="closeModal()">
+        <div class="modal-panel small-panel">
+            <div class="modal-header">
+                <h3 x-text="cabinetForm.id ? '编辑柜子' : '新增柜子'"></h3>
+                <button class="icon-button round" @click="closeModal()" title="关闭"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+            </div>
+            <div class="modal-body form-stack">
+                <label>名称<input x-model="cabinetForm.name" placeholder="例如 电阻柜 A"></label>
+                <label>颜色<input type="color" x-model="cabinetForm.color" class="color-input"></label>
+                <label>注释<textarea rows="3" x-model="cabinetForm.description" placeholder="记录柜子的位置、层架或用途"></textarea></label>
+                <div class="cabinet-preview" :style="`--cabinet-accent:${cabinetForm.color}`">
+                    <span></span><span></span><span></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" @click="saveCabinet()">保存</button>
                 <button class="btn btn-secondary" @click="closeModal()">取消</button>
             </div>
         </div>
@@ -558,7 +712,7 @@
                     <p x-text="scannerError || '扫码库未加载，请使用图片识别或手动输入。'"></p>
                 </div>
                 <label class="btn btn-primary w-full">从图片识别<input type="file" class="hidden" accept="image/*" capture="environment" @change="handleScannerImage($event.target.files[0]); $event.target.value=''"></label>
-                <label>手动输入<input x-model="scannerManualText" @keydown.enter.prevent="submitManualScan()" placeholder="名称,封装,型号"></label>
+                <label>手动输入<input x-model="scannerManualText" @keydown.enter.prevent="submitManualScan()" placeholder="名称,封装,型号 或元器件二维码内容"></label>
                 <button class="btn btn-secondary" @click="submitManualScan()">使用输入内容</button>
             </div>
         </div>
