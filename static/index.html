@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>电子元器件库存管理</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+    <script>window.__scannerLibLoadErrorMessage = '';</script>
+    <script src="/static/vendor/html5-qrcode.min.js"
+            onerror="window.__scannerLibLoadErrorMessage='本地扫码库加载失败，请确认 /static/vendor/html5-qrcode.min.js 存在。';"></script>
+</head>
+<body x-data="app()" x-init="initApp()" @keydown.escape.window="closeAllModals()">
+    <div class="app-shell">
+        <aside class="side-nav">
+            <div class="brand-block">
+                <div class="brand-mark">CI</div>
+                <div>
+                    <div class="brand-title">元器件库存</div>
+                    <div class="brand-subtitle">实验台工作区</div>
+                </div>
+            </div>
+            <nav class="nav-list">
+                <template x-for="item in navItems" :key="item.id">
+                    <button class="nav-item" :class="{ active: page === item.id }" @click="navigate(item.id)">
+                        <span class="nav-icon" x-text="item.label.slice(0, 1)"></span>
+                        <span x-text="item.label"></span>
+                    </button>
+                </template>
+            </nav>
+            <button class="btn btn-secondary w-full mt-auto" @click="openScanner()">扫码录入</button>
+        </aside>
+
+        <div class="main-shell">
+            <header class="topbar">
+                <div class="topbar-title">
+                    <div class="topbar-kicker">Components Inventory</div>
+                    <h1 x-text="navItems.find(item => item.id === page)?.label || (page === 'box-detail' ? '收纳盒详情' : '工作台')"></h1>
+                </div>
+                <div class="search-box" x-show="['components','map'].includes(page)">
+                    <button type="button" @click="onSearch()" title="搜索" aria-label="搜索">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 21-4.35-4.35M10.8 18.1a7.3 7.3 0 1 1 0-14.6 7.3 7.3 0 0 1 0 14.6Z"/>
+                        </svg>
+                    </button>
+                    <input x-model="searchKeyword" @keydown.enter.prevent="onSearch()" placeholder="搜索名称、型号、标称值">
+                    <button type="button" x-show="searchKeyword" @click="clearSearch()" title="清空" aria-label="清空">×</button>
+                </div>
+                <div class="topbar-actions">
+                    <button class="icon-button" @click="openScanner()" title="扫码">⌗</button>
+                </div>
+            </header>
+
+            <main class="content-shell">
+                <section x-show="page === 'dashboard'" x-cloak class="dashboard-shell">
+                    <div class="dashboard-hero">
+                        <div>
+                            <div class="section-kicker"><span class="status-dot status-info"></span>库存概览</div>
+                            <h2>把元器件、收纳盒和 BOM 取料放在同一张工作台上。</h2>
+                            <p>快速查看低库存、最近出入库、盒子占用情况，并直接进入地图或列表继续操作。</p>
+                        </div>
+                        <div class="hero-meter">
+                            <div>格子占用</div>
+                            <strong><span x-text="stats.used_slots || 0"></span>/<span x-text="stats.total_slots || 0"></span></strong>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-stat-grid">
+                        <div class="dashboard-stat-card"><span>元器件种类</span><strong x-text="stats.total_components ?? '-'"></strong></div>
+                        <div class="dashboard-stat-card"><span>库存总量</span><strong x-text="stats.total_quantity ?? '-'"></strong></div>
+                        <div class="dashboard-stat-card"><span>收纳盒</span><strong x-text="stats.total_boxes ?? '-'"></strong></div>
+                        <div class="dashboard-stat-card" :class="{ danger: (stats.low_stock_count || 0) > 0 }"><span>低库存</span><strong x-text="stats.low_stock_count ?? '-'"></strong></div>
+                    </div>
+
+                    <div class="dashboard-workgrid">
+                        <div class="section-card">
+                            <div class="section-header">
+                                <h3>低库存提醒</h3>
+                                <span class="section-kicker">Restock</span>
+                            </div>
+                            <template x-for="item in lowStockList" :key="item.id">
+                                <button class="alert-row" @click="openComponentDetail(item.id)">
+                                    <div>
+                                        <strong x-text="item.name"></strong>
+                                        <span x-text="locationText(item)"></span>
+                                    </div>
+                                    <b><span x-text="item.quantity"></span>/<span x-text="item.min_stock"></span></b>
+                                </button>
+                            </template>
+                            <div class="empty-state" x-show="lowStockList.length === 0">当前没有低库存条目</div>
+                        </div>
+                        <div class="section-card">
+                            <div class="section-header">
+                                <h3>最近变动</h3>
+                                <span class="section-kicker">Activity</span>
+                            </div>
+                            <template x-for="log in recentLogs" :key="log.id">
+                                <div class="activity-row">
+                                    <div>
+                                        <strong x-text="log.component_name"></strong>
+                                        <span x-text="log.reason || log.operation_type"></span>
+                                    </div>
+                                    <div class="activity-qty">
+                                        <b :class="log.operation_type === 'in' ? 'text-success' : 'text-warn'" x-text="(log.operation_type === 'in' ? '+' : '') + log.quantity_change"></b>
+                                        <span x-text="formatDateTime(log.created_at)"></span>
+                                    </div>
+                                </div>
+                            </template>
+                            <div class="empty-state" x-show="recentLogs.length === 0">暂无库存变动</div>
+                        </div>
+                    </div>
+                </section>
+
+                <section x-show="page === 'components'" x-cloak class="component-shell">
+                    <div class="page-toolbar">
+                        <div>
+                            <h2>元器件列表</h2>
+                            <p>按分类、盒子和库存状态筛选，也可以扫码快速创建。</p>
+                        </div>
+                        <button class="btn btn-primary" @click="openComponentForm()">新增元器件</button>
+                    </div>
+                    <div class="filter-ribbon">
+                        <select x-model="filterCategory" @change="componentPagination.page = 1; loadComponents()">
+                            <option value="">全部分类</option>
+                            <template x-for="category in categories" :key="category.id">
+                                <option :value="category.id" x-text="category.name"></option>
+                            </template>
+                        </select>
+                        <select x-model="filterBox" @change="componentPagination.page = 1; loadComponents()">
+                            <option value="">全部收纳盒</option>
+                            <template x-for="box in boxes" :key="box.id">
+                                <option :value="box.id" x-text="box.name"></option>
+                            </template>
+                        </select>
+                        <select x-model="filterStock" @change="componentPagination.page = 1; loadComponents()">
+                            <option value="">全部库存</option>
+                            <option value="low">仅低库存</option>
+                        </select>
+                        <button class="btn btn-secondary" @click="resetComponentFilters()">重置</button>
+                        <span class="inventory-chip ml-auto"><span x-text="componentPagination.total"></span>&nbsp;items</span>
+                    </div>
+                    <div class="component-card-grid">
+                        <template x-for="item in componentList" :key="item.id">
+                            <button class="inventory-card" :class="{ low: stockState(item) === 'low' }" @click="openComponentDetail(item.id)">
+                                <div class="inventory-thumb">
+                                    <img x-show="item.primary_image" :src="item.primary_image" alt="">
+                                    <span x-show="!item.primary_image">IMG</span>
+                                </div>
+                                <div class="inventory-main">
+                                    <div class="inventory-title">
+                                        <strong x-text="item.name"></strong>
+                                        <span class="inventory-chip danger-chip" x-show="stockState(item) === 'low'">LOW</span>
+                                    </div>
+                                    <p x-text="[item.model, item.package, item.spec_summary].filter(Boolean).join(' / ') || '未填写规格'"></p>
+                                    <div class="inventory-meta">
+                                        <span class="inventory-chip" x-show="item.category_name" x-text="item.category_name"></span>
+                                        <span class="inventory-chip" x-text="locationText(item)"></span>
+                                    </div>
+                                </div>
+                                <div class="inventory-qty">
+                                    <span>Stock</span>
+                                    <strong x-text="item.quantity"></strong>
+                                    <small>Min <span x-text="item.min_stock || 0"></span></small>
+                                </div>
+                            </button>
+                        </template>
+                        <div class="section-card empty-state" x-show="!loading && componentList.length === 0">没有找到元器件</div>
+                    </div>
+                    <div class="pagination" x-show="componentPagination.total > 0">
+                        <button class="btn btn-secondary" :disabled="componentPagination.page <= 1" @click="changePage(-1)">上一页</button>
+                        <span>第 <b x-text="componentPagination.page"></b> / <b x-text="Math.max(1, Math.ceil(componentPagination.total / componentPagination.page_size))"></b> 页</span>
+                        <button class="btn btn-secondary" :disabled="componentPagination.page >= Math.ceil(componentPagination.total / componentPagination.page_size)" @click="changePage(1)">下一页</button>
+                    </div>
+                </section>
+
+                <section x-show="page === 'boxes'" x-cloak class="boxes-shell">
+                    <div class="page-toolbar">
+                        <div>
+                            <h2>收纳盒</h2>
+                            <p>管理格子尺寸、颜色和盒内元器件。</p>
+                        </div>
+                        <button class="btn btn-primary" @click="openBoxForm()">新增收纳盒</button>
+                    </div>
+                    <div class="box-card-grid">
+                        <template x-for="box in boxes" :key="box.id">
+                            <div class="box-card">
+                                <button class="box-card-main" @click="viewBoxDetail(box.id)">
+                                    <span class="box-swatch" :style="`background:${box.color || '#84b59b'}`"></span>
+                                    <strong x-text="box.name"></strong>
+                                    <span><span x-text="box.used_slots || 0"></span>/<span x-text="box.total_slots || (box.rows * box.cols)"></span> 格</span>
+                                </button>
+                                <div class="box-actions">
+                                    <button @click="editBox(box)">编辑</button>
+                                    <button class="danger-link" @click="deleteBox(box)">删除</button>
+                                </div>
+                            </div>
+                        </template>
+                        <div class="section-card empty-state" x-show="boxes.length === 0">还没有收纳盒</div>
+                    </div>
+                </section>
+
+                <section x-show="page === 'box-detail'" x-cloak class="box-detail-shell">
+                    <div class="page-toolbar">
+                        <div>
+                            <button class="back-link" @click="page = 'boxes'">← 返回收纳盒</button>
+                            <h2 x-text="currentBox?.name || '收纳盒详情'"></h2>
+                            <p x-show="currentBox"><span x-text="currentBox.rows"></span>×<span x-text="currentBox.cols"></span> · 占用 <span x-text="currentBox.occupied_count || 0"></span> 格</p>
+                        </div>
+                        <div class="toolbar-actions" x-show="currentBox">
+                            <button class="btn btn-secondary" @click="editBox(currentBox)">编辑</button>
+                            <button class="btn btn-danger" @click="deleteBox(currentBox)">删除</button>
+                        </div>
+                    </div>
+                    <div class="box-grid-panel" x-show="currentBox" :style="`grid-template-columns: repeat(${currentBox?.cols || 1}, minmax(0, 1fr));`">
+                        <template x-for="cell in boxGrid" :key="cell.id">
+                            <button class="grid-cell" :class="cell.component ? (cell.component.quantity <= cell.component.min_stock ? 'grid-cell-low' : 'grid-cell-occupied') : 'grid-cell-empty'" @click="cell.component && openComponentDetail(cell.component.id)">
+                                <strong x-text="cell.component?.name || cell.label"></strong>
+                                <span x-show="cell.component" x-text="[cell.component?.package, '库存 ' + cell.component?.quantity].filter(Boolean).join(' · ')"></span>
+                            </button>
+                        </template>
+                    </div>
+                </section>
+
+                <section x-show="page === 'map'" x-cloak class="map-shell">
+                    <div class="map-head">
+                        <div>
+                            <h2>收纳地图</h2>
+                            <p>拖动盒子调整位置，滚轮或按钮缩放视图。</p>
+                        </div>
+                        <div class="toolbar-actions">
+                            <button class="btn btn-secondary" @click="zoomMap(-0.1)">缩小</button>
+                            <button class="btn btn-secondary" @click="zoomMap(0.1)">放大</button>
+                            <button class="btn btn-secondary" @click="resetMapView()">重置</button>
+                            <button class="btn btn-primary" :disabled="!mapDirty" @click="saveMapLayout()">保存布局</button>
+                        </div>
+                    </div>
+                    <div class="map-workbench">
+                        <div class="map-legend">
+                            <span class="legend-item"><i class="legend-swatch" style="background:#84b59b"></i>收纳盒颜色</span>
+                            <span class="legend-item"><i class="legend-swatch" style="background:#1f7a6c"></i>BOM 高亮</span>
+                            <span class="legend-item">缩放 <b x-text="Math.round(mapState.scale * 100) + '%'"></b></span>
+                        </div>
+                        <div id="map-container" class="map-container" @mousedown="panMapStart($event)" @touchstart="panMapStart($event)" @wheel.prevent="zoomMap($event.deltaY > 0 ? -0.08 : 0.08)">
+                            <div id="map-layer" class="map-layer" :style="mapViewportStyle()">
+                                <template x-for="box in mapBoxes" :key="box.id">
+                                    <div class="map-box" :class="{ highlight: mapHighlights.includes(box.id) }" :style="getMapBoxStyle(box)" @mousedown="startDragBox(box, $event)" @touchstart="startDragBox(box, $event)">
+                                        <div class="map-box-inner" :style="`grid-template-columns: repeat(${box.cols}, 1fr);`">
+                                            <template x-for="cell in box.cells" :key="cell.idx">
+                                                <span class="map-box-cell" :class="{ occupied: cell.occupied }"></span>
+                                            </template>
+                                        </div>
+                                        <div class="map-box-label" x-text="box.name"></div>
+                                        <template x-for="label in box.pickLabels" :key="label.num">
+                                            <div class="pick-label" x-text="label.num"></div>
+                                        </template>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section x-show="page === 'bom'" x-cloak class="bom-shell">
+                    <div class="page-toolbar">
+                        <div>
+                            <h2>BOM 取料</h2>
+                            <p>导入 CSV，匹配库存位置，再导出取料清单或扣减库存。</p>
+                        </div>
+                        <div class="toolbar-actions">
+                            <label class="btn btn-primary">导入 CSV<input type="file" class="hidden" accept=".csv,.txt" @change="importBom($event.target.files[0]); $event.target.value=''"></label>
+                            <button class="btn btn-secondary" :disabled="!bomData" @click="gotoBomMap()">地图取料</button>
+                            <button class="btn btn-secondary" :disabled="!bomData" @click="exportBom()">导出清单</button>
+                            <button class="btn btn-danger" :disabled="!bomData" @click="consumeBom()">扣库存</button>
+                        </div>
+                    </div>
+                    <div class="bom-empty-state" x-show="!bomData">
+                        <h3>等待导入 BOM</h3>
+                        <p>支持 KiCad / 常见 CSV 表头，匹配字段会优先使用值和封装。</p>
+                    </div>
+                    <div class="bom-results" x-show="bomData">
+                        <div class="bom-stat-row">
+                            <div class="mini-panel bom-project-panel">
+                                <span>项目</span>
+                                <strong class="bom-project-name" x-text="bomData?.project_name || '-'"></strong>
+                                <small><span x-text="bomStats.total"></span> 个物料行 · 已匹配 <span x-text="bomStats.matched"></span></small>
+                            </div>
+                            <div class="mini-panel bom-number-panel"><span>匹配</span><strong x-text="bomStats.matched"></strong></div>
+                            <div class="mini-panel bom-number-panel"><span>缺料</span><strong x-text="bomStats.shortage"></strong></div>
+                            <div class="mini-panel bom-number-panel"><span>未匹配</span><strong x-text="bomStats.unmatched"></strong></div>
+                        </div>
+                        <div class="table-wrap bom-table-shell">
+                            <table class="bom-table">
+                                <thead><tr><th>位号</th><th>值 / 名称</th><th>封装</th><th>需求</th><th>匹配库存</th><th>位置</th><th></th></tr></thead>
+                                <tbody>
+                                    <template x-for="(item, idx) in bomData?.items || []" :key="idx">
+                                        <tr>
+                                            <td class="bom-designator" x-text="item.designator"></td>
+                                            <td class="bom-name-cell" x-text="item.comment"></td>
+                                            <td class="bom-footprint" x-text="item.footprint"></td>
+                                            <td class="bom-qty" x-text="item.quantity_needed"></td>
+                                            <td class="bom-match-cell">
+                                                <span class="bom-match-name" x-show="item.matched" x-text="`${item.matched.name} (${item.matched.quantity})`"></span>
+                                                <span x-show="!item.matched" class="text-danger">未匹配</span>
+                                            </td>
+                                            <td class="bom-location" x-text="item.matched ? `${item.matched.box_name || '-'} / ${item.matched.cell_label || '-'}` : '-'"></td>
+                                            <td class="bom-row-action"><button class="table-link" x-show="item.matched?.box_id" @click="gotoMapHighlight(item.matched.box_id)">地图</button></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <section x-show="page === 'nfc'" x-cloak class="nfc-shell">
+                    <div class="page-toolbar">
+                        <div>
+                            <h2>NFC 标签</h2>
+                            <p>为收纳盒绑定 UID，或写入可打开盒子页面的 NDEF 链接。</p>
+                        </div>
+                    </div>
+                    <div class="section-card nfc-panel">
+                        <label>收纳盒</label>
+                        <select x-model="nfcBoxId">
+                            <option value="">请选择收纳盒</option>
+                            <template x-for="box in boxes" :key="box.id">
+                                <option :value="box.id" x-text="box.name"></option>
+                            </template>
+                        </select>
+                        <div class="toolbar-actions">
+                            <button class="btn btn-primary" @click="nfcBind()">读取并绑定 UID</button>
+                            <button class="btn btn-secondary" @click="nfcWrite()">写入 NDEF 链接</button>
+                        </div>
+                        <div class="nfc-status" x-show="nfcStatus" :class="nfcStatus?.type">
+                            <strong x-text="nfcStatus?.title"></strong>
+                            <span x-text="nfcStatus?.message"></span>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <nav class="bottom-nav">
+        <template x-for="item in navItems.slice(0, 5)" :key="item.id">
+            <button :class="{ active: page === item.id }" @click="navigate(item.id)">
+                <span x-text="item.label.slice(0, 1)"></span>
+                <small x-text="item.label"></small>
+            </button>
+        </template>
+    </nav>
+
+    <input type="file" accept=".xlsx,.xls" class="hidden" x-ref="importInput" @change="handleImportFile($event.target.files[0]); $event.target.value=''">
+
+    <div x-show="modal === 'component-form'" x-cloak class="modal-overlay" @click.self="closeModal()">
+        <div class="modal-panel modal-sheet-form" x-ref="componentFormPanel">
+            <div class="modal-header">
+                <h3 x-text="componentForm.id ? '编辑元器件' : '新增元器件'"></h3>
+                <button class="icon-button" @click="closeModal()">×</button>
+            </div>
+            <div class="modal-body form-stack">
+                <div class="form-grid two">
+                    <label>名称<input x-model="componentForm.name" placeholder="例如 10k 电阻"></label>
+                    <label>分类<select x-model="componentForm.category_id"><option value="">未分类</option><template x-for="category in categories" :key="category.id"><option :value="category.id" x-text="category.name"></option></template></select></label>
+                    <label>型号<input x-model="componentForm.model" placeholder="例如 STM32F103C8T6"></label>
+                    <label>封装<input x-model="componentForm.package" placeholder="例如 0603 / LQFP-48"></label>
+                    <label>库存数量<input type="number" min="0" x-model.number="componentForm.quantity"></label>
+                    <label>低库存阈值<input type="number" min="0" x-model.number="componentForm.min_stock"></label>
+                </div>
+                <div class="modal-soft-section">
+                    <div class="section-mini-title">规格字段</div>
+                    <div class="form-grid three">
+                        <label>标称值<input x-model="componentForm.nominal_value" placeholder="10uF / 1k"></label>
+                        <label>耐压<input x-model="componentForm.voltage_rating" placeholder="16V"></label>
+                        <label>耐流<input x-model="componentForm.current_rating" placeholder="500mA"></label>
+                        <label>功率<input x-model="componentForm.power_rating" placeholder="1/8W"></label>
+                        <label>精度<input x-model="componentForm.tolerance" placeholder="±5%"></label>
+                        <label>材质/类型<input x-model="componentForm.material_type" placeholder="X5R / NPN"></label>
+                    </div>
+                </div>
+                <div class="form-grid two">
+                    <label>厂商<input x-model="componentForm.manufacturer"></label>
+                    <label>标签<input x-model="componentForm.tagsInput" placeholder="逗号分隔"></label>
+                    <label>收纳盒<select x-model="componentForm.box_id" @change="onBoxChange(false)"><option value="">暂不入盒</option><template x-for="box in boxes" :key="box.id"><option :value="box.id" x-text="box.name"></option></template></select></label>
+                    <label>格子<select x-model="componentForm.cell_row" :disabled="!componentForm.box_id" @change="onCellSelect()"><option value="">选择格子</option><template x-for="cell in availableCells" :key="cell.id"><option :value="cell.id" :disabled="cell.occupied" x-text="cell.label + (cell.occupied ? '（已占用）' : '')"></option></template></select></label>
+                </div>
+                <label>描述<textarea rows="3" x-model="componentForm.description" placeholder="用途、采购链接或备注"></textarea></label>
+                <div>
+                    <div class="section-mini-title">图片</div>
+                    <div class="image-list">
+                        <template x-for="(img, index) in componentForm.images" :key="index">
+                            <div class="image-tile">
+                                <img :src="img.url" alt="">
+                                <button @click="removeImage(index)">×</button>
+                            </div>
+                        </template>
+                        <label class="image-uploader">+<input type="file" accept="image/*" @change="uploadComponentImage($event.target.files[0]); $event.target.value=''"></label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" @click="saveComponent()">保存</button>
+                <button class="btn btn-secondary" @click="closeModal()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="modal === 'component-detail'" x-cloak class="modal-overlay" @click.self="closeModal()">
+        <div class="modal-panel modal-sheet-detail">
+            <div class="modal-header">
+                <h3>元器件详情</h3>
+                <button class="icon-button" @click="closeModal()">×</button>
+            </div>
+            <div class="modal-body" x-show="currentComponent">
+                <div class="detail-images">
+                    <template x-for="img in currentComponent?.images || []" :key="img.id">
+                        <img :src="img.url" @click="previewImage = img.url" alt="">
+                    </template>
+                    <div class="empty-state" x-show="!(currentComponent?.images || []).length">暂无图片</div>
+                </div>
+                <h2 x-text="currentComponent?.name"></h2>
+                <p class="muted" x-text="[currentComponent?.model, currentComponent?.package].filter(Boolean).join(' / ')"></p>
+                <div class="detail-stat-grid">
+                    <div><span>库存</span><strong x-text="currentComponent?.quantity"></strong></div>
+                    <div><span>低库存阈值</span><strong x-text="currentComponent?.min_stock"></strong></div>
+                    <div><span>位置</span><strong x-text="locationText(currentComponent)"></strong></div>
+                    <div><span>分类</span><strong x-text="currentComponent?.category_name || '未分类'"></strong></div>
+                </div>
+                <div class="modal-soft-section spec-list">
+                    <template x-for="row in [
+                        ['标称值', currentComponent?.nominal_value],
+                        ['耐压', currentComponent?.voltage_rating],
+                        ['耐流', currentComponent?.current_rating],
+                        ['功率', currentComponent?.power_rating],
+                        ['精度', currentComponent?.tolerance],
+                        ['材质/类型', currentComponent?.material_type],
+                        ['厂商', currentComponent?.manufacturer]
+                    ].filter(row => row[1])" :key="row[0]">
+                        <div><span x-text="row[0]"></span><strong x-text="row[1]"></strong></div>
+                    </template>
+                </div>
+                <p class="description" x-show="currentComponent?.description" x-text="currentComponent?.description"></p>
+                <div class="toolbar-actions">
+                    <button class="btn btn-success" @click="openStockModal('in')">入库</button>
+                    <button class="btn btn-danger" @click="openStockModal('out')">出库</button>
+                    <button class="btn btn-primary" @click="editCurrentComponent()">编辑</button>
+                    <button class="btn btn-secondary danger-link" @click="deleteCurrentComponent()">删除</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="modal === 'stock'" x-cloak class="modal-overlay" @click.self="modal = 'component-detail'">
+        <div class="modal-panel small-panel">
+            <div class="modal-header">
+                <h3 x-text="stockForm.type === 'in' ? '入库' : '出库'"></h3>
+                <button class="icon-button" @click="modal = 'component-detail'">×</button>
+            </div>
+            <div class="modal-body form-stack">
+                <label>数量<input type="number" min="1" x-model.number="stockForm.quantity"></label>
+                <label>原因/备注<input x-model="stockForm.reason" placeholder="例如 采购入库 / 项目领用"></label>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" @click="submitStock()">确认</button>
+                <button class="btn btn-secondary" @click="modal = 'component-detail'">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="modal === 'box-form'" x-cloak class="modal-overlay" @click.self="closeModal()">
+        <div class="modal-panel small-panel">
+            <div class="modal-header">
+                <h3 x-text="boxForm.id ? '编辑收纳盒' : '新增收纳盒'"></h3>
+                <button class="icon-button" @click="closeModal()">×</button>
+            </div>
+            <div class="modal-body form-stack">
+                <label>名称<input x-model="boxForm.name" placeholder="例如 电容盒 A"></label>
+                <div class="form-grid two">
+                    <label>行数<input type="number" min="1" max="20" x-model.number="boxForm.rows"></label>
+                    <label>列数<input type="number" min="1" max="20" x-model.number="boxForm.cols"></label>
+                </div>
+                <label>颜色<input type="color" x-model="boxForm.color" class="color-input"></label>
+                <div class="box-preview" :style="`--box-accent:${boxForm.color}; grid-template-columns: repeat(${Math.min(boxForm.cols || 4, 8)}, 1fr);`">
+                    <template x-for="i in Math.min((boxForm.rows || 4) * (boxForm.cols || 4), 64)" :key="i">
+                        <span></span>
+                    </template>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" @click="saveBox()">保存</button>
+                <button class="btn btn-secondary" @click="closeModal()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="modal === 'scanner'" x-cloak class="modal-overlay" @click.self="closeScanner()">
+        <div class="modal-panel small-panel scanner-panel">
+            <div class="modal-header">
+                <h3>扫码录入</h3>
+                <button class="icon-button" @click="closeScanner()">×</button>
+            </div>
+            <div class="modal-body form-stack">
+                <div id="scanner-container" class="scanner-container" x-show="isScannerAvailable() && !scannerError"></div>
+                <div class="modal-soft-section" x-show="!isScannerAvailable() || scannerError">
+                    <strong>摄像头扫码不可用</strong>
+                    <p x-text="scannerError || '扫码库未加载，请使用图片识别或手动输入。'"></p>
+                </div>
+                <label class="btn btn-primary w-full">从图片识别<input type="file" class="hidden" accept="image/*" capture="environment" @change="handleScannerImage($event.target.files[0]); $event.target.value=''"></label>
+                <label>手动输入<input x-model="scannerManualText" @keydown.enter.prevent="submitManualScan()" placeholder="名称,封装,型号"></label>
+                <button class="btn btn-secondary" @click="submitManualScan()">使用输入内容</button>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="previewImage" x-cloak class="image-preview-overlay" @click.self="previewImage = null">
+        <img :src="previewImage" alt="">
+    </div>
+
+    <div x-show="loadingOverlay" x-cloak class="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/logger.js"></script>
+    <script src="/static/js/map.js"></script>
+    <script src="/static/js/nfc.js"></script>
+    <script src="/static/js/scanner.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

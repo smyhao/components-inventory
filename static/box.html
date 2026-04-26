@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>收纳盒查看</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        body {
+            background:
+                radial-gradient(circle at top left, rgba(243, 212, 170, 0.48), transparent 28%),
+                linear-gradient(180deg, #fbf6ee 0%, #f4ecdf 100%);
+            color: #2e3a35;
+            font-family: "Avenir Next", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
+        }
+
+        .box-grid {
+            display: grid;
+            gap: 8px;
+        }
+
+        .box-cell {
+            aspect-ratio: 1;
+            border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            padding: 6px;
+            text-align: center;
+            border: 1px solid #d6c8b4;
+            box-shadow: 0 10px 20px rgba(113, 89, 58, 0.08);
+        }
+
+        .box-cell-empty {
+            background: #fffaf2;
+            color: #938a78;
+        }
+
+        .box-cell-ok {
+            background: linear-gradient(180deg, #e0f0e8, #d2e9dd);
+            color: #295b47;
+            border-color: #8bb49f;
+        }
+
+        .box-cell-low {
+            background: linear-gradient(180deg, #f7eadb, #f2ddcb);
+            color: #8d5831;
+            border-color: #d2a177;
+        }
+
+        .box-cell-name {
+            font-weight: 600;
+            line-height: 1.2;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            word-break: break-all;
+        }
+
+        .box-cell-qty {
+            font-size: 10px;
+            margin-top: 2px;
+            opacity: 0.85;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+    <div id="app">
+        <div class="px-4 py-3 border-b border-neutral-700 flex items-center justify-between bg-neutral-800 shadow-sm">
+            <div>
+                <h1 id="box-name" class="font-bold text-base">加载中...</h1>
+                <p id="box-meta" class="text-xs text-neutral-500 mt-0.5"></p>
+            </div>
+            <a href="/" class="text-xs bg-neutral-700 hover:bg-neutral-600 text-cyan-400 px-3 py-1.5 rounded-xl transition-colors border border-neutral-700">打开管理</a>
+        </div>
+        <div class="flex-1 p-3">
+            <div id="grid" class="box-grid"></div>
+        </div>
+        <div class="px-4 py-2 text-center text-[10px] text-neutral-600 border-t border-neutral-700 bg-white/60">
+            电子元器件库存管理系统
+        </div>
+    </div>
+
+    <script src="/static/js/api.js"></script>
+    <script>
+        (async function() {
+            const pathMatch = window.location.pathname.match(/\/box\/(\d+)/);
+            const boxId = pathMatch ? pathMatch[1] : null;
+            if (!boxId) {
+                document.getElementById('box-name').textContent = '无效的收纳盒 ID';
+                return;
+            }
+            try {
+                const [box, grid] = await Promise.all([
+                    api.get(`/api/boxes/${boxId}`),
+                    api.get(`/api/boxes/${boxId}/grid`)
+                ]);
+                document.getElementById('box-name').textContent = box.name;
+                document.getElementById('box-meta').textContent = `${box.rows}×${box.cols} · 占用 ${box.occupied_count || 0}/${box.rows * box.cols}`;
+
+                const gridEl = document.getElementById('grid');
+                gridEl.style.gridTemplateColumns = `repeat(${grid.cols}, minmax(0, 1fr))`;
+
+                for (let r = 0; r < grid.rows; r++) {
+                    for (let c = 0; c < grid.cols; c++) {
+                        const cell = grid.cells[r][c];
+                        const el = document.createElement('div');
+                        el.className = 'box-cell ' + (cell.component ? (cell.component.quantity <= cell.component.min_stock ? 'box-cell-low' : 'box-cell-ok') : 'box-cell-empty');
+                        if (cell.component) {
+                            el.innerHTML = `<div class="box-cell-name">${escapeHtml(cell.component.name)}</div><div class="box-cell-qty">${cell.component.quantity}</div>`;
+                        } else {
+                            el.textContent = cell.label;
+                        }
+                        gridEl.appendChild(el);
+                    }
+                }
+            } catch (e) {
+                document.getElementById('box-name').textContent = '加载失败';
+                document.getElementById('box-meta').textContent = e.message;
+            }
+        })();
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
