@@ -34,6 +34,7 @@ from config import (
     ensure_runtime_directories,
 )
 from init_db import init_database
+from led_proxy import LEDProxy
 from logger import FileLogger
 from models import (
     InventoryError,
@@ -54,6 +55,7 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 file_logger = FileLogger(LOG_FILE, FRONTEND_LOG_FILE)
 repo = InventoryRepository(DATABASE_PATH, file_logger, UPLOAD_FOLDER)
+led_proxy = LEDProxy(repo)
 file_logger.write_backend("SYSTEM", "backend initialized")
 
 
@@ -1030,6 +1032,111 @@ def api_bom_export():
     data = export_bom_xlsx(payload)
     file_logger.write_backend("SYSTEM", "export bom picklist")
     return excel_response(data, "bom_picklist.xlsx")
+
+
+# ── LED 定位 API ──────────────────────────────────────────
+
+
+@app.get("/api/settings/led")
+def api_settings_led():
+    config = repo.get_led_config()
+    devices = repo.list_led_devices()
+    strips = repo.list_led_strips()
+    mappings = repo.get_led_mappings()
+    return success({"config": config, "devices": devices, "strips": strips, "mappings": mappings})
+
+
+@app.put("/api/settings/led")
+def api_settings_led_update():
+    payload = request.get_json(silent=True) or {}
+    config = repo.update_led_config(payload)
+    return success({"config": config})
+
+
+@app.post("/api/settings/led/devices")
+def api_led_device_create():
+    device = repo.create_led_device(request.get_json(silent=True) or {})
+    return success(device)
+
+
+@app.put("/api/settings/led/devices/<int:device_id>")
+def api_led_device_update(device_id: int):
+    device = repo.update_led_device(device_id, request.get_json(silent=True) or {})
+    return success(device)
+
+
+@app.delete("/api/settings/led/devices/<int:device_id>")
+def api_led_device_delete(device_id: int):
+    repo.delete_led_device(device_id)
+    return success({"id": device_id})
+
+
+@app.post("/api/settings/led/devices/<int:device_id>/test")
+def api_led_device_test(device_id: int):
+    result = led_proxy.test_device(device_id)
+    return success(result)
+
+
+@app.post("/api/settings/led/strips")
+def api_led_strip_create():
+    strip = repo.create_led_strip(request.get_json(silent=True) or {})
+    return success(strip)
+
+
+@app.put("/api/settings/led/strips/<int:strip_id>")
+def api_led_strip_update(strip_id: int):
+    strip = repo.update_led_strip(strip_id, request.get_json(silent=True) or {})
+    return success(strip)
+
+
+@app.delete("/api/settings/led/strips/<int:strip_id>")
+def api_led_strip_delete(strip_id: int):
+    repo.delete_led_strip(strip_id)
+    return success({"id": strip_id})
+
+
+@app.put("/api/settings/led/mappings")
+def api_settings_led_mappings():
+    payload = request.get_json(silent=True) or {}
+    mappings = repo.save_led_mappings(payload.get("mappings", []))
+    return success({"mappings": mappings})
+
+
+@app.post("/api/led/locate/box/<int:box_id>")
+def api_led_locate_box(box_id: int):
+    result = led_proxy.locate_box(box_id)
+    file_logger.write_backend("LED", f"locate box: id={box_id}")
+    return success(result)
+
+
+@app.post("/api/led/locate/component/<int:component_id>")
+def api_led_locate_component(component_id: int):
+    result = led_proxy.locate_component(component_id)
+    file_logger.write_backend("LED", f"locate component: id={component_id}")
+    return success(result)
+
+
+@app.post("/api/led/locate/bom")
+def api_led_locate_bom():
+    payload = request.get_json(silent=True) or {}
+    box_ids = payload.get("box_ids", [])
+    result = led_proxy.locate_bom(box_ids)
+    file_logger.write_backend("LED", f"locate bom: boxes={box_ids}")
+    return success(result)
+
+
+@app.post("/api/led/clear")
+def api_led_clear():
+    result = led_proxy.clear_all()
+    file_logger.write_backend("LED", "clear all")
+    return success(result)
+
+
+@app.post("/api/led/clear/<int:device_id>")
+def api_led_clear_device(device_id: int):
+    result = led_proxy.clear_device(device_id)
+    file_logger.write_backend("LED", f"clear device: id={device_id}")
+    return success(result)
 
 
 if __name__ == "__main__":

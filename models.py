@@ -1781,6 +1781,240 @@ class InventoryRepository:
             )
             return dict(result) if result else None
 
+    def get_led_config(self) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = self._fetchone(conn, "SELECT * FROM led_config WHERE id = 1")
+            if not row:
+                return {"id": 1, "enabled": 0, "default_color": "#00ff00",
+                        "blink_interval_ms": 500, "blink_duration_ms": 10000}
+            return dict(row)
+
+    def update_led_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"enabled", "default_color", "blink_interval_ms", "blink_duration_ms"}
+        sets: list[str] = []
+        params: list[Any] = []
+        for key in allowed:
+            if key in payload:
+                sets.append(f"{key} = ?")
+                if key == "default_color":
+                    params.append(clean_color(payload[key], "#00ff00"))
+                elif key == "enabled":
+                    params.append(1 if payload[key] else 0)
+                else:
+                    params.append(clean_int(payload[key]))
+        if not sets:
+            return self.get_led_config()
+        params.append(now_text())
+        with self.connect() as conn:
+            conn.execute(
+                f"UPDATE led_config SET {', '.join(sets)}, updated_at = ? WHERE id = 1",
+                tuple(params),
+            )
+        return self.get_led_config()
+
+    def list_led_devices(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = self._fetchall(conn, "SELECT * FROM led_devices ORDER BY id")
+            return [dict(row) for row in rows]
+
+    def get_led_device(self, device_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = self._fetchone(conn, "SELECT * FROM led_devices WHERE id = ?", (device_id,))
+            return dict(row) if row else None
+
+    def create_led_device(self, payload: dict[str, Any]) -> dict[str, Any]:
+        name = clean_text(payload.get("name"))
+        host = clean_text(payload.get("host"))
+        port = clean_int(payload.get("port"), 80)
+        if not name:
+            raise InventoryError("设备名称不能为空")
+        if not host:
+            raise InventoryError("设备地址不能为空")
+        with self.connect() as conn:
+            existing = self._fetchone(conn, "SELECT id FROM led_devices WHERE name = ?", (name,))
+            if existing:
+                raise InventoryError("设备名称已存在")
+            cur = conn.execute(
+                "INSERT INTO led_devices (name, host, port, enabled, created_at) VALUES (?, ?, ?, 1, ?)",
+                (name, host, port, now_text()),
+            )
+            device_id = cur.lastrowid
+        self.file_logger.write_backend("LED", f"create device: name={name}, host={host}:{port}")
+        return {"id": device_id, "name": name, "host": host, "port": port, "enabled": 1}
+
+    def update_led_device(self, device_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            existing = self._fetchone(conn, "SELECT * FROM led_devices WHERE id = ?", (device_id,))
+            if not existing:
+                raise InventoryError("设备不存在")
+            name = clean_text(payload.get("name")) if "name" in payload else existing["name"]
+            host = clean_text(payload.get("host")) if "host" in payload else existing["host"]
+            port = clean_int(payload.get("port"), existing["port"]) if "port" in payload else existing["port"]
+            enabled = 1 if payload["enabled"] else 0 if "enabled" in payload else existing["enabled"]
+            if not name:
+                raise InventoryError("设备名称不能为空")
+            if not host:
+                raise InventoryError("设备地址不能为空")
+            dup = self._fetchone(conn, "SELECT id FROM led_devices WHERE name = ? AND id != ?", (name, device_id))
+            if dup:
+                raise InventoryError("设备名称已存在")
+            conn.execute(
+                "UPDATE led_devices SET name = ?, host = ?, port = ?, enabled = ? WHERE id = ?",
+                (name, host, port, enabled, device_id),
+            )
+        self.file_logger.write_backend("LED", f"update device: id={device_id}, name={name}")
+        return {"id": device_id, "name": name, "host": host, "port": port, "enabled": enabled}
+
+    def delete_led_device(self, device_id: int) -> None:
+        with self.connect() as conn:
+            row = self._fetchone(conn, "SELECT id, name FROM led_devices WHERE id = ?", (device_id,))
+            if not row:
+                raise InventoryError("设备不存在")
+            conn.execute("DELETE FROM led_devices WHERE id = ?", (device_id,))
+        self.file_logger.write_backend("LED", f"delete device: id={device_id}, name={row['name']}")
+
+    def list_led_strips(self, device_id: int | None = None) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            if device_id is not None:
+                rows = self._fetchall(
+                    conn,
+                    """SELECT s.*, d.name AS device_name
+                       FROM led_strips s JOIN led_devices d ON d.id = s.device_id
+                       WHERE s.device_id = ? ORDER BY s.id""",
+                    (device_id,),
+                )
+            else:
+                rows = self._fetchall(
+                    conn,
+                    """SELECT s.*, d.name AS device_name
+                       FROM led_strips s JOIN led_devices d ON d.id = s.device_id
+                       ORDER BY s.id""",
+                )
+            return [dict(row) for row in rows]
+
+    def create_led_strip(self, payload: dict[str, Any]) -> dict[str, Any]:
+        device_id = clean_int(payload.get("device_id"))
+        name = clean_text(payload.get("name"))
+        gpio_num = clean_int(payload.get("gpio_num"))
+        led_count = clean_int(payload.get("led_count"), 0)
+        if not device_id:
+            raise InventoryError("请选择设备")
+        if not name:
+            raise InventoryError("灯带名称不能为空")
+        if gpio_num < 0:
+            raise InventoryError("GPIO 编号无效")
+        with self.connect() as conn:
+            dev = self._fetchone(conn, "SELECT id FROM led_devices WHERE id = ?", (device_id,))
+            if not dev:
+                raise InventoryError("设备不存在")
+            dup = self._fetchone(
+                conn, "SELECT id FROM led_strips WHERE device_id = ? AND gpio_num = ?",
+                (device_id, gpio_num),
+            )
+            if dup:
+                raise InventoryError("该设备的此 GPIO 已被占用")
+            cur = conn.execute(
+                "INSERT INTO led_strips (device_id, name, gpio_num, led_count) VALUES (?, ?, ?, ?)",
+                (device_id, name, gpio_num, led_count),
+            )
+            strip_id = cur.lastrowid
+        self.file_logger.write_backend("LED", f"create strip: name={name}, device_id={device_id}, gpio={gpio_num}")
+        return {"id": strip_id, "device_id": device_id, "name": name, "gpio_num": gpio_num, "led_count": led_count}
+
+    def update_led_strip(self, strip_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            existing = self._fetchone(conn, "SELECT * FROM led_strips WHERE id = ?", (strip_id,))
+            if not existing:
+                raise InventoryError("灯带不存在")
+            device_id = clean_int(payload.get("device_id")) if "device_id" in payload else existing["device_id"]
+            name = clean_text(payload.get("name")) if "name" in payload else existing["name"]
+            gpio_num = clean_int(payload.get("gpio_num")) if "gpio_num" in payload else existing["gpio_num"]
+            led_count = clean_int(payload.get("led_count"), existing["led_count"]) if "led_count" in payload else existing["led_count"]
+            dev = self._fetchone(conn, "SELECT id FROM led_devices WHERE id = ?", (device_id,))
+            if not dev:
+                raise InventoryError("设备不存在")
+            dup = self._fetchone(
+                conn, "SELECT id FROM led_strips WHERE device_id = ? AND gpio_num = ? AND id != ?",
+                (device_id, gpio_num, strip_id),
+            )
+            if dup:
+                raise InventoryError("该设备的此 GPIO 已被占用")
+            conn.execute(
+                "UPDATE led_strips SET device_id = ?, name = ?, gpio_num = ?, led_count = ? WHERE id = ?",
+                (device_id, name, gpio_num, led_count, strip_id),
+            )
+        self.file_logger.write_backend("LED", f"update strip: id={strip_id}, name={name}")
+        return {"id": strip_id, "device_id": device_id, "name": name, "gpio_num": gpio_num, "led_count": led_count}
+
+    def delete_led_strip(self, strip_id: int) -> None:
+        with self.connect() as conn:
+            row = self._fetchone(conn, "SELECT id, name FROM led_strips WHERE id = ?", (strip_id,))
+            if not row:
+                raise InventoryError("灯带不存在")
+            conn.execute("DELETE FROM led_strips WHERE id = ?", (strip_id,))
+        self.file_logger.write_backend("LED", f"delete strip: id={strip_id}, name={row['name']}")
+
+    def get_led_mappings(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = self._fetchall(
+                conn,
+                """SELECT m.id, m.box_id, m.strip_id, m.led_index,
+                          b.name AS box_name,
+                          s.name AS strip_name, s.gpio_num, s.device_id,
+                          d.name AS device_name
+                   FROM led_box_mapping m
+                   JOIN boxes b ON b.id = m.box_id
+                   JOIN led_strips s ON s.id = m.strip_id
+                   JOIN led_devices d ON d.id = s.device_id
+                   ORDER BY m.id""",
+            )
+            return [dict(row) for row in rows]
+
+    def save_led_mappings(self, mappings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM led_box_mapping")
+            for item in mappings:
+                box_id = clean_int(item.get("box_id"))
+                strip_id = clean_int(item.get("strip_id"))
+                led_index = clean_int(item.get("led_index"))
+                if not box_id or not strip_id:
+                    continue
+                box = self._fetchone(conn, "SELECT id FROM boxes WHERE id = ?", (box_id,))
+                if not box:
+                    raise InventoryError(f"盒子 {box_id} 不存在")
+                strip = self._fetchone(conn, "SELECT * FROM led_strips WHERE id = ?", (strip_id,))
+                if not strip:
+                    raise InventoryError(f"灯带 {strip_id} 不存在")
+                if led_index < 0 or (strip["led_count"] > 0 and led_index >= strip["led_count"]):
+                    raise InventoryError(f"LED 索引 {led_index} 超出灯带范围")
+                dup = self._fetchone(
+                    conn, "SELECT id FROM led_box_mapping WHERE strip_id = ? AND led_index = ?",
+                    (strip_id, led_index),
+                )
+                if dup:
+                    raise InventoryError(f"灯带 {strip_id} 的 LED {led_index} 已被映射")
+                conn.execute(
+                    "INSERT INTO led_box_mapping (box_id, strip_id, led_index) VALUES (?, ?, ?)",
+                    (box_id, strip_id, led_index),
+                )
+        self.file_logger.write_backend("LED", f"save mappings: count={len(mappings)}")
+        return self.get_led_mappings()
+
+    def find_led_by_box(self, box_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = self._fetchone(
+                conn,
+                """SELECT m.strip_id, m.led_index,
+                          s.gpio_num, s.device_id,
+                          d.name AS device_name, d.host, d.port
+                   FROM led_box_mapping m
+                   JOIN led_strips s ON s.id = m.strip_id
+                   JOIN led_devices d ON d.id = s.device_id
+                   WHERE m.box_id = ?""",
+                (box_id,),
+            )
+            return dict(row) if row else None
+
     def bom_component_candidates(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
             rows = self._fetchall(

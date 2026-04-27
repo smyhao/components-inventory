@@ -1757,6 +1757,34 @@ img {
     font-size: 11px;
 }
 
+.map-box-led-btn {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+    font-size: 12px;
+    line-height: 22px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    z-index: 3;
+}
+
+.map-box:hover .map-box-led-btn {
+    opacity: 1;
+}
+
+.map-box-led-btn:hover {
+    background: rgba(0, 0, 0, 0.6);
+    transform: scale(1.15);
+}
+
 .map-cabinet {
     position: absolute;
     cursor: grab;

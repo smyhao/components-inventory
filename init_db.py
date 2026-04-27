@@ -140,6 +140,44 @@ CREATE INDEX IF NOT EXISTS idx_compartments_box_id ON compartments(box_id);
 CREATE INDEX IF NOT EXISTS idx_stock_logs_component_id ON stock_logs(component_id);
 CREATE INDEX IF NOT EXISTS idx_documents_component_id ON documents(component_id);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_active ON api_tokens(active);
+
+CREATE TABLE IF NOT EXISTS led_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    default_color TEXT NOT NULL DEFAULT '#00ff00',
+    blink_interval_ms INTEGER NOT NULL DEFAULT 500,
+    blink_duration_ms INTEGER NOT NULL DEFAULT 10000,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS led_devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 80,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS led_strips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    gpio_num INTEGER NOT NULL,
+    led_count INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (device_id) REFERENCES led_devices(id) ON DELETE CASCADE,
+    UNIQUE(device_id, gpio_num)
+);
+
+CREATE TABLE IF NOT EXISTS led_box_mapping (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    box_id INTEGER NOT NULL UNIQUE,
+    strip_id INTEGER NOT NULL,
+    led_index INTEGER NOT NULL,
+    FOREIGN KEY (box_id) REFERENCES boxes(id) ON DELETE CASCADE,
+    FOREIGN KEY (strip_id) REFERENCES led_strips(id) ON DELETE CASCADE,
+    UNIQUE(strip_id, led_index)
+);
 """
 
 
@@ -181,4 +219,9 @@ def init_database(database_path: Path) -> None:
                 "INSERT INTO categories (name, parent_id, icon) VALUES (?, NULL, NULL)",
                 [(name,) for name in DEFAULT_CATEGORIES],
             )
+
+        led_cfg_count = conn.execute("SELECT COUNT(*) FROM led_config").fetchone()[0]
+        if led_cfg_count == 0:
+            conn.execute("INSERT INTO led_config (id, enabled) VALUES (1, 0)")
+
         conn.commit()
