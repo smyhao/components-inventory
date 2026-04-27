@@ -724,7 +724,7 @@ img {
     transform: translateZ(0);
 }
 
-.dashboard-stat-card::before,
+/* mini-panel 保持默认顶部装饰条 */
 .mini-panel::before {
     content: "";
     position: absolute;
@@ -735,6 +735,46 @@ img {
     background: linear-gradient(90deg, var(--accent), transparent);
     opacity: 0;
     transition: opacity 0.2s ease;
+}
+
+/* 统计卡片默认装饰条：顶部水平，从左到右 */
+.dashboard-stat-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+/* 上方位置：顶部水平条，从上到下渐变 */
+.dashboard-stat-card.stat-pos-top::before {
+    background: linear-gradient(180deg, var(--accent), transparent);
+}
+
+/* 左方位置：左侧垂直条，从左到右渐变 */
+.dashboard-stat-card.stat-pos-left::before {
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: auto;
+    width: 3px;
+    height: auto;
+    background: linear-gradient(90deg, var(--accent), transparent);
+}
+
+/* 右方位置：右侧垂直条，从右到左渐变 */
+.dashboard-stat-card.stat-pos-right::before {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: auto;
+    width: 3px;
+    height: auto;
+    background: linear-gradient(270deg, var(--accent), transparent);
 }
 
 .dashboard-stat-card:hover,
@@ -751,9 +791,22 @@ img {
     opacity: 0.5;
 }
 
+/* danger 变体 */
 .dashboard-stat-card.danger::before {
     background: linear-gradient(90deg, var(--danger), transparent);
     opacity: 0.6;
+}
+
+.dashboard-stat-card.danger.stat-pos-top::before {
+    background: linear-gradient(180deg, var(--danger), transparent);
+}
+
+.dashboard-stat-card.danger.stat-pos-left::before {
+    background: linear-gradient(90deg, var(--danger), transparent);
+}
+
+.dashboard-stat-card.danger.stat-pos-right::before {
+    background: linear-gradient(270deg, var(--danger), transparent);
 }
 
 .dashboard-stat-card.danger:hover::before {

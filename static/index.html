@@ -97,10 +97,10 @@
                     </div>
 
                     <div class="dashboard-stat-grid">
-                        <div class="dashboard-stat-card"><span>元器件种类</span><strong x-text="stats.total_components ?? '-'"></strong></div>
-                        <div class="dashboard-stat-card"><span>库存总量</span><strong x-text="stats.total_quantity ?? '-'"></strong></div>
-                        <div class="dashboard-stat-card"><span>收纳盒</span><strong x-text="stats.total_boxes ?? '-'"></strong></div>
-                        <div class="dashboard-stat-card" :class="{ danger: (stats.low_stock_count || 0) > 0 }"><span>低库存</span><strong x-text="stats.low_stock_count ?? '-'"></strong></div>
+                        <div class="dashboard-stat-card stat-pos-top"><span>元器件种类</span><strong x-text="stats.total_components ?? '-'"></strong></div>
+                        <div class="dashboard-stat-card stat-pos-top"><span>库存总量</span><strong x-text="stats.total_quantity ?? '-'"></strong></div>
+                        <div class="dashboard-stat-card stat-pos-top"><span>收纳盒</span><strong x-text="stats.total_boxes ?? '-'"></strong></div>
+                        <div class="dashboard-stat-card stat-pos-top" :class="{ danger: (stats.low_stock_count || 0) > 0 }"><span>低库存</span><strong x-text="stats.low_stock_count ?? '-'"></strong></div>
                     </div>
 
                     <div class="dashboard-workgrid">
