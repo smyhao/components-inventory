@@ -267,14 +267,28 @@
                     <div class="map-head">
                         <div>
                             <h2>收纳地图</h2>
-                            <p>拖动盒子调整位置，滚轮或按钮缩放视图。</p>
+                            <p><strong>拖动</strong>盒子调整位置，<strong>滚轮</strong>或按钮缩放视图。</p>
                         </div>
                         <div class="toolbar-actions">
-                            <button class="btn btn-secondary" @click="openCabinetForm()">新增柜子</button>
-                            <button class="btn btn-secondary" @click="zoomMap(-0.1)">缩小</button>
-                            <button class="btn btn-secondary" @click="zoomMap(0.1)">放大</button>
-                            <button class="btn btn-secondary" @click="resetMapView()">重置</button>
-                            <button class="btn btn-primary" :disabled="!mapDirty" @click="saveMapLayout()">保存布局</button>
+                            <div class="map-btn-group">
+                                <button class="btn btn-secondary" @click="openCabinetForm()">新增柜子</button>
+                                <select class="btn btn-secondary map-bg-select" x-model="mapBackground" @change="localStorage.setItem('inventory-map-bg', mapBackground)">
+                                    <option value="grid">网格背景</option>
+                                    <option value="clean">干净背景</option>
+                                    <option value="dot">点阵背景</option>
+                                    <option value="dark">深色网格</option>
+                                </select>
+                                <input type="file" accept="image/*" x-ref="mapBgInput" @change="uploadMapBackground($event)" style="display:none">
+                                <button class="btn btn-secondary" @click="$refs.mapBgInput.click()">上传背景图</button>
+                                <button class="btn btn-secondary" x-show="mapBackgroundUrl" @click="clearMapBackground()">清除背景</button>
+                            </div>
+                            <div class="map-btn-divider"></div>
+                            <div class="map-btn-group">
+                                <button class="btn btn-secondary" @click="zoomMap(-0.1)">缩小</button>
+                                <button class="btn btn-secondary" @click="zoomMap(0.1)">放大</button>
+                                <button class="btn btn-secondary" @click="resetMapView()">重置</button>
+                                <button class="btn btn-primary" :disabled="!mapDirty" @click="saveMapLayout()">保存布局</button>
+                            </div>
                         </div>
                     </div>
                     <div class="map-workbench">
@@ -284,7 +298,7 @@
                             <span class="legend-item"><i class="legend-swatch" style="background:#1f7a6c"></i>BOM 高亮</span>
                             <span class="legend-item">缩放 <b x-text="Math.round(mapState.scale * 100) + '%'"></b></span>
                         </div>
-                        <div id="map-container" class="map-container" @mousedown="panMapStart($event)" @touchstart="panMapStart($event)" @wheel.prevent="zoomMap($event.deltaY > 0 ? -0.08 : 0.08)">
+                        <div id="map-container" class="map-container" :class="{[`bg-${mapBackground}`]: !mapBackgroundUrl, 'has-custom-bg': mapBackgroundUrl}" :style="mapBackgroundUrl ? `background: url('${mapBackgroundUrl}') center/cover no-repeat;` : ''" @mousedown="panMapStart($event)" @touchstart="panMapStart($event)" @wheel.prevent="zoomMap($event.deltaY > 0 ? -0.08 : 0.08)">
                             <div id="map-layer" class="map-layer" :style="mapViewportStyle()">
                                 <template x-for="cabinet in mapCabinets" :key="'cabinet-' + cabinet.id">
                                     <div class="map-cabinet" :class="{ open: isCabinetExpanded(cabinet), dragging: draggingCabinet === cabinet }" :style="getMapCabinetStyle(cabinet)" @mousedown="startDragCabinet(cabinet, $event)" @touchstart="startDragCabinet(cabinet, $event)">

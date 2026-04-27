@@ -89,6 +89,8 @@ function app() {
         draggingBox: null,
         draggingCabinet: null,
         dragState: null,
+        mapBackground: localStorage.getItem('inventory-map-bg') || 'grid',
+        mapBackgroundUrl: '',
 
         bomFile: null,
         bomData: null,
@@ -801,6 +803,7 @@ function app() {
             try {
                 this.loading = true;
                 const data = await api.get('/api/map');
+                this.mapBackgroundUrl = data.map_background || '';
                 const cellSize = 22;
                 const gap = 4;
                 const allBoxes = (data.boxes || []).map((box, index) => ({
@@ -838,6 +841,37 @@ function app() {
                 this.toast('加载地图失败：' + err.message, 'error');
             } finally {
                 this.loading = false;
+            }
+        },
+
+        async uploadMapBackground(event) {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            try {
+                this.loadingOverlay = true;
+                const result = await uploadFile('/api/map/background', file);
+                this.mapBackgroundUrl = result?.url || '';
+                this.toast('背景图已上传', 'success');
+            } catch (err) {
+                this.toast('上传背景图失败：' + err.message, 'error');
+            } finally {
+                this.loadingOverlay = false;
+                event.target.value = '';
+            }
+        },
+
+        async clearMapBackground() {
+            if (!this.mapBackgroundUrl) return;
+            if (!confirm('确定清除自定义背景图吗？')) return;
+            try {
+                this.loadingOverlay = true;
+                await api.del('/api/map/background');
+                this.mapBackgroundUrl = '';
+                this.toast('背景图已清除', 'success');
+            } catch (err) {
+                this.toast('清除背景图失败：' + err.message, 'error');
+            } finally {
+                this.loadingOverlay = false;
             }
         },
 

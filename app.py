@@ -932,9 +932,50 @@ def api_stats():
     return success(repo.get_stats())
 
 
+def get_map_background_url() -> str | None:
+    for ext in ALLOWED_IMAGE_EXTENSIONS:
+        path = UPLOAD_FOLDER / f"map_background{ext}"
+        if path.exists():
+            return f"/uploads/map_background{ext}?v={int(path.stat().st_mtime)}"
+    return None
+
+
 @app.get("/api/map")
 def api_map():
-    return success(repo.get_map_data())
+    data = repo.get_map_data()
+    data["map_background"] = get_map_background_url()
+    return success(data)
+
+
+@app.post("/api/map/background")
+def api_upload_map_background():
+    file = request.files.get("file")
+    if not file or not file.filename:
+        raise InventoryError("missing upload file")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        raise InventoryError("only image files are allowed")
+    for old_ext in ALLOWED_IMAGE_EXTENSIONS:
+        old_path = UPLOAD_FOLDER / f"map_background{old_ext}"
+        if old_path.exists():
+            old_path.unlink()
+    target = UPLOAD_FOLDER / f"map_background{ext}"
+    file.save(target)
+    file_logger.write_backend("SYSTEM", f"upload map background: {target.name}")
+    return success({"url": f"/uploads/map_background{ext}"})
+
+
+@app.delete("/api/map/background")
+def api_delete_map_background():
+    deleted = False
+    for ext in ALLOWED_IMAGE_EXTENSIONS:
+        path = UPLOAD_FOLDER / f"map_background{ext}"
+        if path.exists():
+            path.unlink()
+            deleted = True
+    if deleted:
+        file_logger.write_backend("SYSTEM", "delete map background")
+    return success({"deleted": deleted})
 
 
 @app.post("/api/map/search")

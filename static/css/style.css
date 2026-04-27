@@ -1507,6 +1507,37 @@ img {
     box-shadow: var(--shadow-sm);
 }
 
+.map-head h2 {
+    font-weight: 800;
+    letter-spacing: -0.01em;
+}
+
+.map-head .map-bg-select {
+    width: auto;
+    min-width: 0;
+    max-width: 120px;
+    padding: 6px 28px 6px 10px;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23776b5d'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+}
+
+.map-btn-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.map-btn-divider {
+    width: 1px;
+    height: 24px;
+    background: rgba(175, 160, 140, 0.35);
+    margin: 0 4px;
+}
+
 .map-workbench {
     display: flex;
     flex-direction: column;
@@ -1542,6 +1573,26 @@ img {
     background-size: 24px 24px, 24px 24px, auto;
     border: 1px solid rgba(219, 205, 184, 0.85);
     box-shadow: var(--shadow-inner);
+}
+
+.map-container.bg-clean {
+    background: linear-gradient(180deg, rgba(255, 252, 247, 0.92), rgba(244, 236, 221, 0.95));
+    background-size: auto;
+}
+
+.map-container.bg-dot {
+    background:
+        radial-gradient(circle, rgba(188, 207, 199, 0.35) 1.2px, transparent 1.2px),
+        linear-gradient(180deg, rgba(255, 252, 247, 0.92), rgba(244, 236, 221, 0.95));
+    background-size: 24px 24px, auto;
+}
+
+.map-container.bg-dark {
+    background:
+        linear-gradient(rgba(120, 140, 130, 0.30) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(120, 140, 130, 0.30) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(245, 242, 235, 0.92), rgba(230, 222, 208, 0.95));
+    background-size: 24px 24px, 24px 24px, auto;
 }
 
 .map-layer {
@@ -3510,6 +3561,10 @@ label {
         flex-direction: column;
         align-items: stretch;
         gap: 12px;
+    }
+
+    .map-btn-divider {
+        display: none;
     }
 
     .dashboard-hero {
