@@ -847,6 +847,11 @@ function app() {
 
         startDragCabinet(cabinet, event) {
             if (event.touches && event.touches.length > 1) return;
+            // 如果点击的是柜子内部的可交互元素（收纳盒、编辑/删除按钮、把手、查看按钮），不启动柜子拖拽
+            const target = event.target;
+            if (target.closest('.cabinet-box-model, .cabinet-edit, .cabinet-delete, .cabinet-handle, .cabinet-box-open')) {
+                return;
+            }
             event.stopPropagation();
             const point = this.eventPoint(event);
             this.draggingCabinet = cabinet;
@@ -900,9 +905,6 @@ function app() {
         endPointerWork() {
             if (this.dragState?.type === 'box' && this.draggingBox && !this.dragState.moved) {
                 this.viewBoxDetail(this.draggingBox.id);
-            }
-            if (this.dragState?.type === 'cabinet' && this.draggingCabinet && !this.dragState.moved) {
-                this.toggleCabinet(this.draggingCabinet);
             }
             this.draggingBox = null;
             this.draggingCabinet = null;

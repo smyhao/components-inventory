@@ -98,6 +98,7 @@
 
         .box-grid {
             display: grid;
+            container-type: inline-size;
             gap: 10px;
             padding: 18px;
             border-radius: 22px;
@@ -113,7 +114,7 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
+            font-size: clamp(8px, 3.5cqi, 13px);
             padding: 8px;
             text-align: center;
             border: 1px solid #d6c8b4;
@@ -122,6 +123,7 @@
             position: relative;
             overflow: hidden;
             font-weight: 600;
+            word-break: break-all;
         }
 
         .box-cell::before {
@@ -181,7 +183,7 @@
             font-weight: 700;
             line-height: 1.2;
             display: -webkit-box;
-            -webkit-line-clamp: 2;
+            -webkit-line-clamp: 3;
             -webkit-box-orient: vertical;
             overflow: hidden;
             word-break: break-all;
@@ -190,7 +192,7 @@
         }
 
         .box-cell-qty {
-            font-size: 11px;
+            font-size: clamp(7px, 2.8cqi, 11px);
             margin-top: 3px;
             opacity: 0.85;
             position: relative;
@@ -269,12 +271,16 @@
 
             .box-cell {
                 border-radius: 12px;
-                font-size: 11px;
-                padding: 6px;
+                padding: 4px 2px;
+                aspect-ratio: unset;
+            }
+
+            .box-cell-qty {
+                display: none;
             }
 
             .box-cell-name {
-                -webkit-line-clamp: 1;
+                -webkit-line-clamp: 3;
             }
         }
 
