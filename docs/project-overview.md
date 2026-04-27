@@ -131,6 +131,8 @@ http://localhost:5000
 | `PORT` | `5000` | Flask 监听端口，可通过环境变量覆盖 |
 | `SERVER_URL` | `http://localhost:5000` | 生成 NFC URL 时使用 |
 | `SECRET_KEY` | `dev-secret-key-change-in-production` | Flask 密钥，生产环境应覆盖 |
+| `API_TOKEN` | 空 | 可选的部署级自动化 Bearer token |
+| `API_TOKEN_REQUIRE_ALL` | `false` | 是否要求所有 `/api` 请求都携带 token |
 | `MAX_CONTENT_LENGTH` | 16 MB | 上传文件大小限制 |
 | `ALLOWED_IMAGE_EXTENSIONS` | jpg、jpeg、png、gif、webp | 允许上传的图片格式 |
 
@@ -245,6 +247,20 @@ http://localhost:5000
 | `quantity_after` | 操作后的库存数量 |
 | `reason` | 原因 |
 | `created_at` | 创建时间 |
+
+### api_tokens
+
+自动化设备 token 表。用于区分不同 CLI、扫码枪脚本、EDA 脚本或 AI 工具的操作来源。
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 主键 |
+| `name` | token 名称，通常填写设备或脚本名 |
+| `token_hash` | token 的 SHA-256 哈希，不保存明文 |
+| `token_prefix` | token 前缀，用于列表展示 |
+| `created_at` | 创建时间 |
+| `last_used_at` | 最近使用时间 |
+| `active` | 是否有效。删除 token 时置为 0 |
 
 ## 7. 后端模块说明
 
@@ -683,6 +699,40 @@ gunicorn --workers 2 --bind 0.0.0.0:5000 --timeout 120 "app:app"
 
 NFC 写入内容依赖 `SERVER_URL`。部署到局域网设备时，如果 `SERVER_URL` 仍是 `localhost`，手机扫描后会访问手机自己的 localhost，导致无法打开服务。
 
+### 自动化 Token
+
+项目支持两类自动化 token：
+
+- 环境变量 `API_TOKEN`：适合作为部署级 fallback token。
+- 数据库设备 token：通过网页隐藏配置入口生成，适合给不同电脑、扫码枪脚本、EDA 脚本或 AI 工具分别配置。
+
+隐藏入口：连续点击左上角 `div.brand-mark` 内的 `CI` 标识 5 次，会打开“自动化配置”弹窗。弹窗目前支持：
+
+- 填写 token 名称并生成 token。
+- 复制生成的 token。完整 token 只显示一次。
+- 查看已生成 token 的名称、前缀和最近使用时间。
+- 删除 token。删除后 token 立即失效。
+
+数据表：`api_tokens`。服务端只保存 `token_hash`，不保存明文 token。删除采用软删除：`active = 0`，并重命名旧记录，避免删除最后一个 token 后系统回到开放状态。
+
+认证规则：
+
+- `inventory-cli` 请求会携带 `X-Inventory-Source: inventory-cli`。
+- 如果设置了 `API_TOKEN`，CLI 请求必须携带环境变量 token 或有效的数据库设备 token。
+- 如果没有设置 `API_TOKEN`，且从未创建过设备 token，CLI 请求在开发模式下允许访问。
+- 一旦创建过设备 token，CLI 请求必须携带有效 Bearer token。
+- 浏览器页面请求保持兼容，不要求携带 CLI token。
+
+相关 API：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/settings/tokens` | 列出 active token，不返回明文 |
+| POST | `/api/settings/tokens` | 生成 token，body 为 `{ "name": "lab-pc" }` |
+| DELETE | `/api/settings/tokens/<id>` | 删除/吊销 token |
+
+自动化写操作会将 token 名称、`X-Inventory-Actor`、HTTP 方法、路径和状态写入 `log/backend.log`，便于区分不同设备的操作来源。
+
 ## 15. 后续开发建议
 
 可优先考虑的改进方向：
@@ -708,4 +758,3 @@ NFC 写入内容依赖 `SERVER_URL`。部署到局域网设备时，如果 `SERV
 | 库存数量不对 | `components.quantity`、`stock_logs`、`repo.record_stock()` |
 | BOM 匹配不准 | `parse_bom_csv()`、`normalize_value()`、`normalize_footprint()`、`bom_component_candidates()` |
 | NFC 打不开 | `SERVER_URL`、`boxes.nfc_uid`、`/box/<box_id>`、`/api/box/<box_id>` |
-

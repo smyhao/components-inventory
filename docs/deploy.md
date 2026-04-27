@@ -109,10 +109,30 @@ HOST=0.0.0.0
 PORT=5000
 SERVER_URL=http://192.168.1.60:5000
 SECRET_KEY=粘贴上一步生成的随机密钥
+API_TOKEN=
+API_TOKEN_REQUIRE_ALL=false
 EOF
 ```
 
 将 `192.168.1.60` 替换为第一步查到的实际 IP。
+
+### 3.3 自动化 Token
+
+推荐为每台自动化设备生成独立 token：
+
+1. 启动服务并打开 Web 页面。
+2. 连续点击左上角 `CI` 标识 5 次，打开“自动化配置”。
+3. 输入设备名，例如 `lab-pc`、`scanner-1` 或 `eda-script`。
+4. 生成并复制 token。
+5. 在设备上执行：
+
+```bash
+python inventory_cli.py config set-token lab <generated-token>
+```
+
+生成的 token 只保存哈希，删除后立即失效。创建过设备 token 后，`inventory-cli`
+来源的请求必须携带有效 Bearer token。`API_TOKEN` 仍可作为部署级 fallback token；
+如果设置 `API_TOKEN_REQUIRE_ALL=true`，所有 `/api` 请求都需要 token，启用前请确认浏览器端也已准备好发送授权头。
 
 ## 第四步：配置系统服务
 

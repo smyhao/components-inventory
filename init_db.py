@@ -121,6 +121,16 @@ CREATE TABLE IF NOT EXISTS stock_logs (
     FOREIGN KEY (component_id) REFERENCES components(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    token_hash TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TEXT,
+    active INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE INDEX IF NOT EXISTS idx_components_name ON components(name);
 CREATE INDEX IF NOT EXISTS idx_components_model ON components(model);
 CREATE INDEX IF NOT EXISTS idx_components_category_id ON components(category_id);
@@ -129,6 +139,7 @@ CREATE INDEX IF NOT EXISTS idx_components_quantity ON components(quantity);
 CREATE INDEX IF NOT EXISTS idx_compartments_box_id ON compartments(box_id);
 CREATE INDEX IF NOT EXISTS idx_stock_logs_component_id ON stock_logs(component_id);
 CREATE INDEX IF NOT EXISTS idx_documents_component_id ON documents(component_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_active ON api_tokens(active);
 """
 
 

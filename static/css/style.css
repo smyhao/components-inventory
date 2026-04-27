@@ -199,6 +199,11 @@ img {
     overflow: hidden;
 }
 
+.brand-mark {
+    cursor: pointer;
+    user-select: none;
+}
+
 .brand-mark::after {
     content: "";
     position: absolute;
@@ -2722,6 +2727,10 @@ label {
     width: min(440px, calc(100vw - 28px));
 }
 
+.settings-panel {
+    width: min(620px, calc(100vw - 28px));
+}
+
 .modal-header,
 .modal-footer {
     display: flex;
@@ -2777,6 +2786,60 @@ label {
     background: #f7efe3;
     border: 1px solid rgba(219, 205, 184, 0.75);
     box-shadow: var(--shadow-inner);
+}
+
+.token-create-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+}
+
+.token-result textarea {
+    width: 100%;
+    min-height: 86px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.token-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.token-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(219, 205, 184, 0.75);
+    border-radius: var(--radius-md);
+    background: rgba(255, 253, 249, 0.72);
+}
+
+.token-row div {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.token-row span,
+.token-row small {
+    color: var(--muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.token-delete-btn {
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 7px 12px;
 }
 
 .section-mini-title {

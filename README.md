@@ -49,6 +49,8 @@ cp .env.example .env
 | `PORT` | `5000` | 监听端口 |
 | `SERVER_URL` | `http://localhost:5000` | 服务器外部访问地址（用于 NFC 链接生成） |
 | `SECRET_KEY` | — | Flask 密钥（生产环境务必修改） |
+| `API_TOKEN` | 空 | 可选的部署级自动化 Bearer token |
+| `API_TOKEN_REQUIRE_ALL` | `false` | 是否要求所有 `/api` 请求都携带 token |
 
 ### 运行
 
@@ -57,6 +59,48 @@ python app.py
 ```
 
 访问 `http://localhost:5000` 即可使用。
+
+## CLI automation
+
+The first CLI version can be run directly from the repository:
+
+```bash
+python inventory_cli.py config set-server lab http://192.168.1.20:5000
+python inventory_cli.py config set-token lab change-me
+python inventory_cli.py --profile lab stats --json
+python inventory_cli.py --profile lab components list --keyword 10k --json
+python inventory_cli.py --profile lab components create --name "Resistor" --value "10k" --package "0603" --quantity 100 --json
+python inventory_cli.py --profile lab stock out 1 --quantity 5 --reason "prototype build" --json
+python inventory_cli.py --profile lab boxes grid 1 --json
+```
+
+Profile data is stored in `~/.components-inventory/config.json`. The CLI also accepts
+`--server`, `--token`, `--json`, `--pretty`, `--quiet`, `--timeout`, and `--verbose`.
+
+### Device tokens
+
+Device-specific CLI tokens can be generated from the web UI:
+
+1. Open the web app.
+2. Click the `CI` brand mark in the upper-left corner 5 times.
+3. Enter a token name such as `lab-pc` or `scanner-1`.
+4. Generate and copy the token. The full token is shown only once.
+5. Configure the CLI:
+
+```bash
+python inventory_cli.py config set-token lab <generated-token>
+```
+
+Generated tokens are stored in SQLite as hashes. The token list shows only the token
+name, prefix, and last-used time. Deleting a token invalidates it immediately. If at
+least one device token has ever been created, `inventory-cli` requests must provide a
+valid token.
+
+`API_TOKEN` is still supported as an environment-level fallback token:
+
+```bash
+API_TOKEN=change-me python app.py
+```
 
 ## 项目结构
 
@@ -138,6 +182,9 @@ components-inventory/
 | POST | `/api/nfc/bind` | 绑定 NFC |
 | POST | `/api/nfc/write` | 生成 NDEF 内容 |
 | GET | `/api/nfc/lookup/<uid>` | NFC UID 查询 |
+| GET | `/api/settings/tokens` | List active automation tokens |
+| POST | `/api/settings/tokens` | Create a device automation token |
+| DELETE | `/api/settings/tokens/<id>` | Revoke a device automation token |
 
 ## 技术栈
 

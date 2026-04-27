@@ -105,6 +105,11 @@ function app() {
 
         scannerManualText: '',
         scannerError: '',
+        brandClickCount: 0,
+        brandClickStartedAt: 0,
+        tokenForm: { name: '' },
+        apiTokens: [],
+        generatedToken: '',
 
         async initApp() {
             await Promise.all([this.loadCategories(), this.loadCabinets(), this.loadBoxes()]);
@@ -119,6 +124,98 @@ function app() {
             if (pageId === 'boxes') await Promise.all([this.loadCabinets(), this.loadBoxes()]);
             if (pageId === 'map') await this.loadMapData();
             if (pageId === 'nfc') await this.loadBoxes();
+        },
+
+        async handleBrandMarkClick() {
+            const now = Date.now();
+            if (!this.brandClickStartedAt || now - this.brandClickStartedAt > 1800) {
+                this.brandClickStartedAt = now;
+                this.brandClickCount = 0;
+            }
+            this.brandClickCount += 1;
+            if (this.brandClickCount >= 5) {
+                this.brandClickCount = 0;
+                this.brandClickStartedAt = 0;
+                await this.openSettings();
+            }
+        },
+
+        async openSettings() {
+            this.modal = 'settings';
+            this.generatedToken = '';
+            this.tokenForm = { name: '' };
+            await this.loadApiTokens();
+        },
+
+        async loadApiTokens() {
+            try {
+                this.apiTokens = await api.get('/api/settings/tokens');
+            } catch (err) {
+                this.toast('加载 Token 失败：' + err.message, 'error');
+            }
+        },
+
+        async generateApiToken() {
+            const name = (this.tokenForm.name || '').trim();
+            if (!name) {
+                this.toast('请先填写 Token 名称', 'warn');
+                return;
+            }
+            try {
+                const result = await api.post('/api/settings/tokens', { name });
+                this.generatedToken = result.token;
+                this.tokenForm.name = '';
+                await this.loadApiTokens();
+                this.toast('Token 已生成，请立即保存', 'success');
+            } catch (err) {
+                this.toast('生成 Token 失败：' + err.message, 'error');
+            }
+        },
+
+        async copyGeneratedToken() {
+            if (!this.generatedToken) return;
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(this.generatedToken);
+                } else {
+                    this.copyTextFallback(this.generatedToken);
+                }
+                this.toast('Token 已复制', 'success');
+            } catch (err) {
+                try {
+                    this.copyTextFallback(this.generatedToken);
+                    this.toast('Token 已复制', 'success');
+                } catch (fallbackErr) {
+                    this.toast('复制失败，请手动选择 Token', 'error');
+                }
+            }
+        },
+
+        copyTextFallback(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            textarea.style.top = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            const ok = document.execCommand('copy');
+            textarea.remove();
+            if (!ok) throw new Error('copy command failed');
+        },
+
+        async deleteApiToken(token) {
+            if (!token || !token.id) return;
+            if (!confirm(`删除 Token "${token.name}"？删除后使用它的设备会立即失效。`)) return;
+            try {
+                await api.del(`/api/settings/tokens/${token.id}`);
+                await this.loadApiTokens();
+                this.toast('Token 已删除', 'success');
+            } catch (err) {
+                this.toast('删除 Token 失败：' + err.message, 'error');
+            }
         },
 
         closeAllModals() {
