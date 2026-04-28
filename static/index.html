@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 本文件负责主应用静态页面结构，业务状态和行为由 static/js/app.js 接管。 -->
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -217,7 +218,10 @@
                             <h2>收纳盒</h2>
                             <p>管理格子尺寸、颜色和盒内元器件。</p>
                         </div>
-                        <button class="btn btn-primary" @click="openBoxForm()">新增收纳盒</button>
+                        <div class="toolbar-actions">
+                            <button class="btn btn-primary" @click="openBoxForm()">新增收纳盒</button>
+                            <button type="button" class="btn btn-secondary" x-show="ledConfig.enabled" :disabled="ledPowerOffLoading" @click="powerOffLed()" x-text="ledPowerOffLoading ? '关闭中...' : '关闭定位'"></button>
+                        </div>
                     </div>
                     <div class="box-card-grid">
                         <template x-for="box in boxes" :key="box.id">
@@ -230,6 +234,7 @@
                                 <div class="box-actions">
                                     <button @click="editBox(box)">编辑</button>
                                     <button class="danger-link" @click="deleteBox(box)">删除</button>
+                                    <button x-show="ledConfig.enabled" @click="locateBox(box.id)">LED 定位</button>
                                 </div>
                             </div>
                         </template>
@@ -246,6 +251,7 @@
                         </div>
                         <div class="toolbar-actions" x-show="currentBox">
                             <button class="btn btn-secondary" x-show="ledConfig.enabled" @click="locateBox(currentBox.id)">LED 定位</button>
+                            <button class="btn btn-secondary" x-show="ledConfig.enabled" :disabled="ledPowerOffLoading" @click="powerOffLed()" x-text="ledPowerOffLoading ? '关灯中...' : '一键关灯'"></button>
                             <button class="btn btn-secondary" @click="editBox(currentBox)">编辑</button>
                             <button class="btn btn-danger" @click="deleteBox(currentBox)">删除</button>
                         </div>
@@ -320,6 +326,7 @@
                                                     <span class="cabinet-box-lid"></span>
                                                     <span class="cabinet-box-name" x-text="box.name"></span>
                                                     <button class="cabinet-box-open" @click.stop="viewBoxDetail(box.id)" aria-label="查看收纳盒"></button>
+                                                    <button class="map-box-led-btn mini" x-show="ledConfig.enabled" @click.stop="locateBox(box.id)" title="LED 定位">LED</button>
                                                     <template x-for="label in box.pickLabels" :key="label.num">
                                                         <i class="pick-label mini" x-text="label.num"></i>
                                                     </template>
@@ -340,7 +347,7 @@
                                         <template x-for="label in box.pickLabels" :key="label.num">
                                             <div class="pick-label" x-text="label.num"></div>
                                         </template>
-                                        <button x-show="ledConfig.enabled" class="map-box-led-btn" @click.stop="locateBox(box.id)" title="LED 定位">💡</button>
+                                        <button class="map-box-led-btn" x-show="ledConfig.enabled" @click.stop="locateBox(box.id)" title="LED 定位">LED</button>
                                     </div>
                                 </template>
                             </div>
@@ -357,7 +364,8 @@
                         <div class="toolbar-actions">
                             <label class="btn btn-primary">导入 CSV<input type="file" class="hidden" accept=".csv,.txt" @change="importBom($event.target.files[0]); $event.target.value=''"></label>
                             <button class="btn btn-secondary" :disabled="!bomData" @click="gotoBomMap()">地图取料</button>
-                            <button class="btn btn-secondary" :disabled="!bomData" x-show="ledConfig.enabled" @click="locateBomItems()">LED 定位</button>
+                            <button class="btn btn-secondary" x-show="ledConfig.enabled" :disabled="!bomData" @click="locateBomItems()">LED 定位</button>
+                            <button class="btn btn-secondary" x-show="ledConfig.enabled" :disabled="ledPowerOffLoading" @click="powerOffLed()" x-text="ledPowerOffLoading ? '关灯中...' : '一键关灯'"></button>
                             <button class="btn btn-secondary" :disabled="!bomData" @click="exportBom()">导出清单</button>
                             <button class="btn btn-danger" :disabled="!bomData" @click="consumeBom()">扣库存</button>
                         </div>
@@ -597,6 +605,8 @@
                 <div class="toolbar-actions">
                     <button class="btn btn-success" @click="openStockModal('in')">入库</button>
                     <button class="btn btn-danger" @click="openStockModal('out')">出库</button>
+                    <button class="btn btn-secondary" x-show="ledConfig.enabled" @click="locateComponent(currentComponent.id)">LED 定位</button>
+                    <button class="btn btn-secondary" x-show="ledConfig.enabled" :disabled="ledPowerOffLoading" @click="powerOffLed()" x-text="ledPowerOffLoading ? '关灯中...' : '一键关灯'"></button>
                     <button class="btn btn-secondary" @click="openCurrentComponentQrLabel()">二维码</button>
                     <button class="btn btn-secondary" x-show="ledConfig.enabled" @click="locateComponent(currentComponent.id)">LED 定位</button>
                     <button class="btn btn-primary" @click="editCurrentComponent()">编辑</button>
@@ -750,39 +760,165 @@
                 <button class="settings-tab" :class="{ active: settingsTab === 'led' }" @click="settingsTab = 'led'">LED 定位</button>
             </div>
             <div class="modal-body form-stack">
-
-                <!-- ===== Token 标签页 ===== -->
-                <template x-if="settingsTab === 'token'">
-                    <div>
-                        <div class="modal-soft-section">
-                            <div class="section-mini-title">生成设备 Token</div>
-                            <div class="token-create-row">
-                                <label>Token 名称<input x-model="tokenForm.name" @keydown.enter.prevent="generateApiToken()" placeholder="例如 lab-pc / scanner-1"></label>
-                                <button class="btn btn-primary" @click="generateApiToken()">生成</button>
-                            </div>
+                <div class="settings-tabs">
+                    <button class="settings-tab" :class="{ active: settingsTab === 'token' }" @click="settingsTab = 'token'">设备 Token</button>
+                    <button class="settings-tab" :class="{ active: settingsTab === 'led' }" @click="settingsTab = 'led'; loadLedConfig()">LED 定位</button>
+                </div>
+                <div class="settings-tab-panel" x-show="settingsTab === 'token'">
+                    <div class="modal-soft-section">
+                        <div class="section-mini-title">生成设备 Token</div>
+                        <div class="token-create-row">
+                            <label>Token 名称<input x-model="tokenForm.name" @keydown.enter.prevent="generateApiToken()" placeholder="例如 lab-pc / scanner-1"></label>
+                            <button class="btn btn-primary" @click="generateApiToken()">生成</button>
                         </div>
-                        <div class="modal-soft-section token-result" x-show="generatedToken">
-                            <div class="section-mini-title">请立即保存</div>
-                            <textarea readonly x-text="generatedToken"></textarea>
-                            <div class="toolbar-actions">
-                                <button class="btn btn-secondary" @click="copyGeneratedToken()">复制 Token</button>
-                            </div>
+                    </div>
+                    <div class="modal-soft-section token-result" x-show="generatedToken">
+                        <div class="section-mini-title">请立即保存</div>
+                        <textarea readonly x-text="generatedToken"></textarea>
+                        <div class="toolbar-actions">
+                            <button class="btn btn-secondary" @click="copyGeneratedToken()">复制 Token</button>
                         </div>
-                        <div class="modal-soft-section">
-                            <div class="section-mini-title">已创建 Token</div>
-                            <div class="token-list">
-                                <template x-for="token in apiTokens" :key="token.id">
-                                    <div class="token-row">
-                                        <div>
-                                            <strong x-text="token.name"></strong>
-                                            <span x-text="token.token_prefix + '...'"></span>
-                                        </div>
-                                        <small x-text="token.last_used_at ? '最近使用 ' + token.last_used_at : '尚未使用'"></small>
-                                        <button class="btn btn-danger token-delete-btn" @click="deleteApiToken(token)">删除</button>
+                    </div>
+                    <div class="modal-soft-section">
+                        <div class="section-mini-title">已创建 Token</div>
+                        <div class="token-list">
+                            <template x-for="token in apiTokens" :key="token.id">
+                                <div class="token-row">
+                                    <div>
+                                        <strong x-text="token.name"></strong>
+                                        <span x-text="token.token_prefix + '...'"></span>
                                     </div>
-                                </template>
-                                <div class="empty-state" x-show="apiTokens.length === 0">还没有创建 Token</div>
+                                    <small x-text="token.last_used_at ? '最近使用 ' + token.last_used_at : '尚未使用'"></small>
+                                    <button class="btn btn-danger token-delete-btn" @click="deleteApiToken(token)">删除</button>
+                                </div>
+                            </template>
+                            <div class="empty-state" x-show="apiTokens.length === 0">还没有创建 Token</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-tab-panel" x-show="settingsTab === 'led'">
+                    <div class="modal-soft-section">
+                        <div class="led-toggle-row">
+                            <div>
+                                <h4>LED 定位功能</h4>
+                                <p>启用后可在元器件详情、收纳盒、地图和 BOM 页面使用 LED 定位。</p>
                             </div>
+                            <label class="switch-label"><input type="checkbox" x-model="ledConfig.enabled" @change="saveLedConfig()"><span>启用</span></label>
+                        </div>
+                        <div class="led-overview" x-show="ledConfig.enabled">
+                            <div class="led-overview-item"><span>设备</span><strong x-text="ledDevices.length"></strong></div>
+                            <div class="led-overview-item"><span>灯带</span><strong x-text="ledStrips.length"></strong></div>
+                            <div class="led-overview-item"><span>映射</span><strong x-text="ledMappings.length"></strong></div>
+                        </div>
+                        <div class="led-config-row">
+                            <label>闪烁时长 ms<input type="number" min="0" max="60000" step="100" x-model.number="ledConfig.blink_duration_ms" @change="saveLedConfig()"></label>
+                            <label>闪烁间隔 ms<input type="number" min="100" max="5000" step="50" x-model.number="ledConfig.blink_interval_ms" @change="saveLedConfig()"></label>
+                            <span class="inventory-chip">每盒独立颜色</span>
+                        </div>
+                    </div>
+
+                    <div class="modal-soft-section">
+                        <div class="led-section-header">
+                            <div class="section-mini-title">设备管理</div>
+                            <button class="btn btn-primary" @click="createLedDevice()">添加设备</button>
+                        </div>
+                        <div class="led-device-list">
+                            <template x-for="device in ledDevices" :key="device.id">
+                                <div class="led-device-card">
+                                    <div>
+                                        <strong x-text="device.name"></strong>
+                                        <span class="inventory-chip danger-chip" x-show="!device.enabled">禁用</span>
+                                        <small x-text="`${device.host}:${device.port}`"></small>
+                                        <small x-show="ledTestResults[device.id]" x-text="ledTestResults[device.id]?.connected ? `OK · ${ledTestResults[device.id].latency_ms}ms` : ledTestResults[device.id]?.error"></small>
+                                    </div>
+                                    <div class="toolbar-actions">
+                                        <button class="btn btn-secondary" @click="testLedDevice(device.id)" x-text="ledTestLoading[device.id] ? '...' : '测试'"></button>
+                                        <button class="btn btn-secondary" @click="editLedDevice(device)">编辑</button>
+                                        <button class="btn btn-danger" @click="deleteLedDevice(device)">删除</button>
+                                    </div>
+                                </div>
+                            </template>
+                            <div class="empty-state" x-show="ledDevices.length === 0">还没有 LED 设备</div>
+                        </div>
+                        <div class="led-inline-form" x-show="ledDeviceForm">
+                            <div class="led-form-grid">
+                                <label>名称<input x-model="ledDeviceForm.name" placeholder="工作台-左"></label>
+                                <label>地址<input x-model="ledDeviceForm.host" placeholder="192.168.1.80"></label>
+                                <label>端口<input type="number" min="1" max="65535" x-model.number="ledDeviceForm.port"></label>
+                                <label class="switch-label"><input type="checkbox" x-model="ledDeviceForm.enabled"><span>启用</span></label>
+                            </div>
+                            <div class="toolbar-actions">
+                                <button class="btn btn-primary" @click="saveLedDevice()">保存设备</button>
+                                <button class="btn btn-secondary" @click="cancelLedDeviceForm()">取消</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal-soft-section">
+                        <div class="led-section-header">
+                            <div class="section-mini-title">灯带管理</div>
+                            <button class="btn btn-primary" :disabled="ledDevices.length === 0" @click="createLedStrip()">添加灯带</button>
+                        </div>
+                        <div class="led-device-list">
+                            <template x-for="strip in ledStrips" :key="strip.id">
+                                <div class="led-device-card">
+                                    <div>
+                                        <strong x-text="strip.name"></strong>
+                                        <small x-text="`${strip.device_name} · GPIO ${strip.gpio_num} · ${strip.led_count || 0} 颗`"></small>
+                                    </div>
+                                    <div class="toolbar-actions">
+                                        <button class="btn btn-secondary" @click="editLedStrip(strip)">编辑</button>
+                                        <button class="btn btn-danger" @click="deleteLedStrip(strip)">删除</button>
+                                    </div>
+                                </div>
+                            </template>
+                            <div class="empty-state" x-show="ledStrips.length === 0">还没有灯带</div>
+                        </div>
+                        <div class="led-inline-form" x-show="ledStripForm">
+                            <div class="led-form-grid">
+                                <label>设备<select x-model="ledStripForm.device_id"><template x-for="device in ledDevices" :key="device.id"><option :value="device.id" x-text="device.name"></option></template></select></label>
+                                <label>名称<input x-model="ledStripForm.name" placeholder="上层灯带"></label>
+                                <label>GPIO<input type="number" min="0" x-model.number="ledStripForm.gpio_num"></label>
+                                <label>LED 数量<input type="number" min="0" x-model.number="ledStripForm.led_count"></label>
+                            </div>
+                            <div class="toolbar-actions">
+                                <button class="btn btn-primary" @click="saveLedStrip()">保存灯带</button>
+                                <button class="btn btn-secondary" @click="cancelLedStripForm()">取消</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal-soft-section" x-show="ledConfig.enabled && ledStrips.length">
+                        <div class="led-section-header">
+                            <div class="section-mini-title">已配置 <span x-text="ledMappings.length"></span> 条映射</div>
+                            <div class="toolbar-actions">
+                                <button class="btn btn-secondary" @click="addLedMapping()">+ 添加</button>
+                                <button type="button" class="btn btn-secondary" :disabled="ledClearLoading" @click="clearLed()" x-text="ledClearLoading ? '清空中...' : '清空映射'"></button>
+                                <button class="btn btn-primary" @click="saveLedMappings()">保存映射</button>
+                            </div>
+                        </div>
+                        <small class="led-clear-status" x-show="ledClearMessage" x-text="ledClearMessage"></small>
+                        <div class="led-mapping-list">
+                            <template x-for="(mapping, index) in ledMappings" :key="index">
+                                <div class="led-mapping-row">
+                                    <select x-model.number="mapping.box_id">
+                                        <template x-for="box in boxes" :key="box.id"><option :value="box.id" x-text="box.name"></option></template>
+                                    </select>
+                                    <select x-model.number="mapping.strip_id" @change="mapping.led_index = nextLedIndex(mapping.strip_id)">
+                                        <template x-for="strip in ledStrips" :key="strip.id"><option :value="strip.id" x-text="ledStripLabel(strip)"></option></template>
+                                    </select>
+                                    <input type="number" min="0" x-model.number="mapping.led_index">
+                                    <div class="led-color-control">
+                                        <label class="led-color-picker" :aria-label="`LED 颜色 ${mapping.color}`">
+                                            <input class="led-color-input" type="color" x-model="mapping.color" @change="mapping.color = normalizeLedColor(mapping.color)">
+                                            <span class="led-color-swatch" :style="`background:${normalizeLedColor(mapping.color)}`"></span>
+                                        </label>
+                                        <span class="led-color-value" x-text="normalizeLedColor(mapping.color)"></span>
+                                    </div>
+                                    <button class="btn btn-danger" @click="removeLedMapping(index)">删除</button>
+                                </div>
+                            </template>
+                            <div class="empty-state" x-show="ledMappings.length === 0">还没有盒子映射</div>
                         </div>
                     </div>
                 </template>

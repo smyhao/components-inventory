@@ -36,5 +36,12 @@ log/*.log
 Thumbs.db
 desktop.ini
 
+# Testing
+.pytest_cache/
+.pytest_tmp/
+data/pytest_*/
+.coverage
+htmlcov/
+
 # Development notes
 md/
