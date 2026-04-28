@@ -136,9 +136,13 @@ CREATE INDEX IF NOT EXISTS idx_components_model ON components(model);
 CREATE INDEX IF NOT EXISTS idx_components_category_id ON components(category_id);
 CREATE INDEX IF NOT EXISTS idx_components_box_id ON components(box_id);
 CREATE INDEX IF NOT EXISTS idx_components_quantity ON components(quantity);
+CREATE INDEX IF NOT EXISTS idx_components_updated_at ON components(updated_at);
 CREATE INDEX IF NOT EXISTS idx_compartments_box_id ON compartments(box_id);
 CREATE INDEX IF NOT EXISTS idx_stock_logs_component_id ON stock_logs(component_id);
+CREATE INDEX IF NOT EXISTS idx_stock_logs_created_at ON stock_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_documents_component_id ON documents(component_id);
+CREATE INDEX IF NOT EXISTS idx_images_component_id ON images(component_id);
+CREATE INDEX IF NOT EXISTS idx_component_tags_tag_id ON component_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_active ON api_tokens(active);
 """
 
@@ -162,6 +166,8 @@ DEFAULT_CATEGORIES = [
 def init_database(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database_path) as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA_SQL)
 
