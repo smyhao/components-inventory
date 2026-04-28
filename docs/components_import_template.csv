@@ -1,4 +1,0 @@
-name,category,model,package,value,voltage,current,power,tolerance,material,manufacturer,quantity,box,row,col,description,tags
-电阻 10K,电阻,R-10K-0603,0603,10K,,,,1%,厚膜,Yageo,100,电阻盒 A,1,1,常用上拉电阻,"常用,贴片"
-电容 1uF,电容,C-1UF-0603,0603,1uF,16V,,,10%,X7R,Murata,50,电容盒 A,2,3,去耦电容,"常用,去耦"
-LED 红色,二极管,LED-RED-0805,0805,红色,2V,20mA,,,发光二极管,Everlight,30,,,红色指示灯,"LED,指示"
