@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from models import (
     InventoryError,
@@ -18,6 +18,14 @@ from models import (
     now_text,
     unique_strings,
 )
+from config import (
+    COMPONENT_DETAIL_STOCK_LOGS,
+    DEFAULT_PAGE_SIZE,
+    LOW_STOCK_DISPLAY_LIMIT,
+    MAX_COMPONENT_PAGE_SIZE,
+    SEARCH_RESULTS_LIMIT,
+)
+from repositories._utils import append_stock_log, delete_files, file_url, image_url
 from repositories.base import BaseRepository
 
 
@@ -46,14 +54,6 @@ class ComponentRepository(BaseRepository):
             LEFT JOIN boxes b ON b.id = c.box_id
             LEFT JOIN compartments cp ON cp.id = c.compartment_id
         """
-
-    def _image_url(self, relative_path: str | None) -> str | None:
-        if not relative_path:
-            return None
-        return "/uploads/" + relative_path.replace("\\", "/")
-
-    def _file_url(self, relative_path: str | None) -> str | None:
-        return self._image_url(relative_path)
 
     def _load_tags_map(self, conn: sqlite3.Connection, component_ids: list[int]) -> dict[int, list[str]]:
         if not component_ids:
@@ -99,7 +99,7 @@ class ComponentRepository(BaseRepository):
         for row in rows:
             component_id = row["component_id"]
             if component_id not in result:
-                result[component_id] = self._image_url(row["path"]) or ""
+                result[component_id] = image_url(row["path"]) or ""
         return result
 
     def _load_images_for_component(self, conn: sqlite3.Connection, component_id: int) -> list[dict[str, Any]]:
@@ -116,8 +116,8 @@ class ComponentRepository(BaseRepository):
         return [
             {
                 "id": row["id"],
-                "url": self._image_url(row["path"]),
-                "thumbnail_url": self._image_url(row["thumbnail_path"]),
+                "url": image_url(row["path"]),
+                "thumbnail_url": image_url(row["thumbnail_path"]),
                 "is_primary": bool(row["is_primary"]),
             }
             for row in rows
@@ -138,7 +138,7 @@ class ComponentRepository(BaseRepository):
             {
                 "id": row["id"],
                 "name": row["original_name"],
-                "url": self._file_url(row["path"]),
+                "url": file_url(row["path"]),
                 "mime_type": row["mime_type"],
                 "file_size": row["file_size"],
                 "created_at": row["created_at"],
@@ -333,21 +333,6 @@ class ComponentRepository(BaseRepository):
         )
         return row["id"] if row else None
 
-    def _delete_image_files(self, rows: Iterable[sqlite3.Row]) -> None:
-        if not self.upload_folder:
-            return
-        for row in rows:
-            for key in ("path", "thumbnail_path"):
-                relative = row[key]
-                if not relative:
-                    continue
-                target = self.upload_folder / relative
-                try:
-                    if target.exists():
-                        target.unlink()
-                except OSError:
-                    continue
-
     def _extract_document_id(self, conn: sqlite3.Connection, ref: Any, component_id: int | None = None) -> int | None:
         if isinstance(ref, int):
             row = self._fetchone(
@@ -372,20 +357,6 @@ class ComponentRepository(BaseRepository):
             (text, component_id, component_id),
         )
         return row["id"] if row else None
-
-    def _delete_document_files(self, rows: Iterable[sqlite3.Row]) -> None:
-        if not self.upload_folder:
-            return
-        for row in rows:
-            relative = row["path"]
-            if not relative:
-                continue
-            target = self.upload_folder / relative
-            try:
-                if target.exists():
-                    target.unlink()
-            except OSError:
-                continue
 
     def _sync_documents(
         self,
@@ -428,7 +399,7 @@ class ComponentRepository(BaseRepository):
                     f"SELECT id, path FROM documents WHERE id IN ({placeholders})",
                     tuple(remove_ids),
                 )
-                self._delete_document_files(remove_rows)
+                delete_files(self.upload_folder, remove_rows, ("path",))
                 conn.execute(
                     f"DELETE FROM documents WHERE id IN ({placeholders})",
                     tuple(remove_ids),
@@ -479,7 +450,7 @@ class ComponentRepository(BaseRepository):
                     f"SELECT id, path, thumbnail_path FROM images WHERE id IN ({placeholders})",
                     tuple(remove_ids),
                 )
-                self._delete_image_files(remove_rows)
+                delete_files(self.upload_folder, remove_rows, ("path", "thumbnail_path"))
                 conn.execute(
                     f"DELETE FROM images WHERE id IN ({placeholders})",
                     tuple(remove_ids),
@@ -491,8 +462,8 @@ class ComponentRepository(BaseRepository):
 
     def list_components(self, filters: dict[str, Any]) -> dict[str, Any]:
         page = max(1, clean_int(filters.get("page"), 1))
-        page_size = clean_int(filters.get("page_size"), 20)
-        page_size = 20 if page_size <= 0 else min(page_size, 500)
+        page_size = clean_int(filters.get("page_size"), DEFAULT_PAGE_SIZE)
+        page_size = DEFAULT_PAGE_SIZE if page_size <= 0 else min(page_size, MAX_COMPONENT_PAGE_SIZE)
         keyword = clean_text(filters.get("keyword"))
         category_id = clean_optional_int(filters.get("category_id"))
         box_id = clean_optional_int(filters.get("box_id"))
@@ -588,9 +559,9 @@ class ComponentRepository(BaseRepository):
                     FROM stock_logs
                     WHERE component_id = ?
                     ORDER BY id DESC
-                    LIMIT 10
+                    LIMIT ?
                     """,
-                    (component_id,),
+                    (component_id, COMPONENT_DETAIL_STOCK_LOGS),
                 )
             ]
             return item
@@ -653,7 +624,7 @@ class ComponentRepository(BaseRepository):
                 if prepared["documents"] is not None:
                     self._sync_documents(conn, merge_target["id"], prepared["documents"], delete_missing=False)
                 if prepared["quantity"] != 0:
-                    self._append_stock_log(conn, merge_target["id"], prepared["quantity"], new_quantity, "initial", reason_text)
+                    append_stock_log(conn, merge_target["id"], prepared["quantity"], new_quantity, "initial", reason_text)
                 component_id = merge_target["id"]
                 message = f"合并库存: {prepared['name']}, +{prepared['quantity']}, 现有={new_quantity}"
                 self.file_logger.write_backend("COMPONENT", message)
@@ -698,7 +669,7 @@ class ComponentRepository(BaseRepository):
             if prepared["documents"] is not None:
                 self._sync_documents(conn, component_id, prepared["documents"], delete_missing=False)
             if prepared["quantity"] != 0:
-                self._append_stock_log(conn, component_id, prepared["quantity"], prepared["quantity"], "initial", reason_text)
+                append_stock_log(conn, component_id, prepared["quantity"], prepared["quantity"], "initial", reason_text)
 
         location = f", 位置={prepared['box_id']}-{prepared['compartment_id']}" if prepared["compartment_id"] else ""
         self.file_logger.write_backend("COMPONENT", f"新增元器件: {prepared['name']}, 数量={prepared['quantity']}{location}")
@@ -775,7 +746,7 @@ class ComponentRepository(BaseRepository):
 
             quantity_diff = prepared["quantity"] - current["quantity"]
             if quantity_diff != 0:
-                self._append_stock_log(conn, component_id, quantity_diff, prepared["quantity"], "adjust", "编辑调整数量")
+                append_stock_log(conn, component_id, quantity_diff, prepared["quantity"], "adjust", "编辑调整数量")
 
         self.file_logger.write_backend("COMPONENT", f"更新元器件: ID={component_id}, 名称={prepared['name']}")
         if quantity_diff != 0:
@@ -792,13 +763,13 @@ class ComponentRepository(BaseRepository):
                 "SELECT id, path, thumbnail_path FROM images WHERE component_id = ?",
                 (component_id,),
             )
-            self._delete_image_files(images)
+            delete_files(self.upload_folder, images, ("path", "thumbnail_path"))
             documents = self._fetchall(
                 conn,
                 "SELECT id, path FROM documents WHERE component_id = ?",
                 (component_id,),
             )
-            self._delete_document_files(documents)
+            delete_files(self.upload_folder, documents, ("path",))
             conn.execute("DELETE FROM components WHERE id = ?", (component_id,))
         self.file_logger.write_backend("COMPONENT", f"删除元器件: ID={component_id}, 名称={component['name']}")
 
@@ -837,8 +808,9 @@ class ComponentRepository(BaseRepository):
                 {self._component_base_sql()}
                 WHERE c.quantity <= c.min_stock
                 ORDER BY (c.min_stock - c.quantity) DESC, c.updated_at DESC
-                LIMIT 10
+                LIMIT ?
                 """,
+                (LOW_STOCK_DISPLAY_LIMIT,),
             )
             tags_map = self._load_tags_map(conn, [row["id"] for row in low_rows])
             primary_map = self._load_primary_image_map(conn, [row["id"] for row in low_rows])
@@ -893,9 +865,9 @@ class ComponentRepository(BaseRepository):
                 JOIN compartments cp ON cp.id = c.compartment_id
                 WHERE c.name LIKE ? OR c.model LIKE ? OR c.description LIKE ?
                 ORDER BY c.updated_at DESC
-                LIMIT 50
+                LIMIT ?
                 """,
-                (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"),
+                (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", SEARCH_RESULTS_LIMIT),
             )
             return [dict(row) for row in rows]
 
@@ -1033,23 +1005,3 @@ class ComponentRepository(BaseRepository):
             )
             return [dict(row) for row in rows]
 
-    # ------------------------------------------------------------------
-    # Stock log helper (used internally by create/update)
-    # ------------------------------------------------------------------
-
-    def _append_stock_log(
-        self,
-        conn: sqlite3.Connection,
-        component_id: int,
-        change: int,
-        quantity_after: int,
-        log_type: str,
-        reason: str,
-    ) -> None:
-        conn.execute(
-            """
-            INSERT INTO stock_logs (component_id, type, change, quantity_after, reason, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (component_id, log_type, change, quantity_after, reason, now_text()),
-        )

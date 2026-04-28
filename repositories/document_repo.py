@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from models import InventoryError
+from repositories._utils import delete_files, file_url, image_url
 from repositories.base import BaseRepository
 
 
@@ -12,43 +13,6 @@ class DocumentRepository(BaseRepository):
         super().__init__(db_path)
         self.file_logger = file_logger
         self.upload_folder = Path(upload_folder) if upload_folder else None
-
-    def _image_url(self, relative_path: str | None) -> str | None:
-        if not relative_path:
-            return None
-        return "/uploads/" + relative_path.replace("\\", "/")
-
-    def _file_url(self, relative_path: str | None) -> str | None:
-        return self._image_url(relative_path)
-
-    def _delete_image_files(self, rows: Iterable) -> None:
-        if not self.upload_folder:
-            return
-        for row in rows:
-            for key in ("path", "thumbnail_path"):
-                relative = row[key]
-                if not relative:
-                    continue
-                target = self.upload_folder / relative
-                try:
-                    if target.exists():
-                        target.unlink()
-                except OSError:
-                    continue
-
-    def _delete_document_files(self, rows: Iterable) -> None:
-        if not self.upload_folder:
-            return
-        for row in rows:
-            relative = row["path"]
-            if not relative:
-                continue
-            target = self.upload_folder / relative
-            try:
-                if target.exists():
-                    target.unlink()
-            except OSError:
-                continue
 
     def create_image_record(
         self,
@@ -77,8 +41,8 @@ class DocumentRepository(BaseRepository):
         return {
             "id": row["id"],
             "component_id": row["component_id"],
-            "url": self._image_url(row["path"]),
-            "thumbnail_url": self._image_url(row["thumbnail_path"]),
+            "url": image_url(row["path"]),
+            "thumbnail_url": image_url(row["thumbnail_path"]),
             "is_primary": bool(row["is_primary"]),
         }
 
@@ -91,7 +55,7 @@ class DocumentRepository(BaseRepository):
             )
             if not image:
                 raise InventoryError("image not found")
-            self._delete_image_files([image])
+            delete_files(self.upload_folder, [image], ("path", "thumbnail_path"))
             conn.execute("DELETE FROM images WHERE id = ?", (image_id,))
         self.file_logger.write_backend("IMAGE", f"删除图片: ID={image_id}")
 
@@ -122,7 +86,7 @@ class DocumentRepository(BaseRepository):
             "id": row["id"],
             "component_id": row["component_id"],
             "name": row["original_name"],
-            "url": self._file_url(row["path"]),
+            "url": file_url(row["path"]),
             "mime_type": row["mime_type"],
             "file_size": row["file_size"],
             "created_at": row["created_at"],
@@ -137,6 +101,6 @@ class DocumentRepository(BaseRepository):
             )
             if not document:
                 raise InventoryError("document not found")
-            self._delete_document_files([document])
+            delete_files(self.upload_folder, [document], ("path",))
             conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
         self.file_logger.write_backend("COMPONENT", f"删除文档: ID={document_id}, 文件={document['original_name']}")

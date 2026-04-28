@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from config import DEFAULT_CABINET_COLOR
 from models import InventoryError, clean_color, clean_text
 from repositories.base import BaseRepository
 
@@ -58,7 +59,7 @@ class CabinetRepository(BaseRepository):
     def create_cabinet(self, payload: dict[str, Any]) -> dict[str, Any]:
         name = clean_text(payload.get("name"))
         description = clean_text(payload.get("description")) or None
-        color = clean_color(payload.get("color"), "#8b9aae")
+        color = clean_color(payload.get("color"), DEFAULT_CABINET_COLOR)
         if not name:
             raise InventoryError("cabinet name is required")
         with self.connect() as conn:
@@ -80,7 +81,7 @@ class CabinetRepository(BaseRepository):
                 raise InventoryError("cabinet not found")
             name = clean_text(payload.get("name")) or existing["name"]
             description = clean_text(payload.get("description")) if "description" in payload else existing["description"]
-            color = clean_color(payload.get("color"), existing["color"] or "#8b9aae")
+            color = clean_color(payload.get("color"), existing["color"] or DEFAULT_CABINET_COLOR)
             conn.execute(
                 "UPDATE cabinets SET name = ?, description = ?, color = ? WHERE id = ?",
                 (name, description, color, cabinet_id),

@@ -20,7 +20,7 @@ SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:5000")
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 API_TOKEN = os.environ.get("API_TOKEN", "")
 API_TOKEN_REQUIRE_ALL = os.environ.get("API_TOKEN_REQUIRE_ALL", "").lower() in {"1", "true", "yes"}
-MAX_CONTENT_LENGTH = 16 * 1024 * 1024
+MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 ALLOWED_DOCUMENT_EXTENSIONS = {
     ".pdf",
@@ -35,6 +35,18 @@ ALLOWED_DOCUMENT_EXTENSIONS = {
     ".pptx",
     ".zip",
 }
+
+# Pagination & limits
+DEFAULT_PAGE_SIZE = 20
+MAX_COMPONENT_PAGE_SIZE = 500
+MAX_STOCK_LOG_PAGE_SIZE = 200
+SEARCH_RESULTS_LIMIT = 50
+COMPONENT_DETAIL_STOCK_LOGS = 10
+LOW_STOCK_DISPLAY_LIMIT = 10
+
+# Default colors
+DEFAULT_BOX_COLOR = "#84b59b"
+DEFAULT_CABINET_COLOR = "#8b9aae"
 
 
 def ensure_runtime_directories() -> None:

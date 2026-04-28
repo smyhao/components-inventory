@@ -4,7 +4,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from config import DEFAULT_BOX_COLOR
 from models import InventoryError, clean_color, clean_int, clean_optional_int, clean_text
+from repositories._utils import image_url
 from repositories.base import BaseRepository
 
 
@@ -12,11 +14,6 @@ class BoxRepository(BaseRepository):
     def __init__(self, db_path: Path, file_logger: Any) -> None:
         super().__init__(db_path)
         self.file_logger = file_logger
-
-    def _image_url(self, relative_path: str | None) -> str | None:
-        if not relative_path:
-            return None
-        return "/uploads/" + relative_path.replace("\\", "/")
 
     def list_boxes(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -121,7 +118,7 @@ class BoxRepository(BaseRepository):
             description = clean_text(payload.get("description")) if "description" in payload else existing["description"]
             rows = clean_int(payload.get("rows"), existing["rows"])
             cols = clean_int(payload.get("cols"), existing["cols"])
-            color = clean_color(payload.get("color"), existing["color"] or "#84b59b")
+            color = clean_color(payload.get("color"), existing["color"] or DEFAULT_BOX_COLOR)
             cabinet_id = clean_optional_int(payload.get("cabinet_id")) if "cabinet_id" in payload else existing["cabinet_id"]
             cabinet_slot = clean_int(payload.get("cabinet_slot"), existing["cabinet_slot"] or 0)
             if rows < 1 or cols < 1:
@@ -221,7 +218,7 @@ class BoxRepository(BaseRepository):
                         "min_stock": row["component_min_stock"],
                         "model": row["component_model"],
                         "package": row["component_package"],
-                        "primary_image": self._image_url(row["primary_image"]),
+                        "primary_image": image_url(row["primary_image"]),
                     }
                 cell = {
                     "id": row["id"],

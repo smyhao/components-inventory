@@ -4,7 +4,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from config import MAX_STOCK_LOG_PAGE_SIZE
 from models import InventoryError, clean_int, clean_optional_int, clean_text, now_text
+from repositories._utils import append_stock_log
 from repositories.base import BaseRepository
 
 
@@ -12,23 +14,6 @@ class StockRepository(BaseRepository):
     def __init__(self, db_path: Path, file_logger: Any) -> None:
         super().__init__(db_path)
         self.file_logger = file_logger
-
-    def _append_stock_log(
-        self,
-        conn: sqlite3.Connection,
-        component_id: int,
-        change: int,
-        quantity_after: int,
-        log_type: str,
-        reason: str,
-    ) -> None:
-        conn.execute(
-            """
-            INSERT INTO stock_logs (component_id, type, change, quantity_after, reason, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (component_id, log_type, change, quantity_after, reason, now_text()),
-        )
 
     def record_stock(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         component_id = clean_int(payload.get("component_id"))
@@ -56,7 +41,7 @@ class StockRepository(BaseRepository):
                 "UPDATE components SET quantity = ?, updated_at = ? WHERE id = ?",
                 (quantity_after, now_text(), component_id),
             )
-            self._append_stock_log(conn, component_id, delta, quantity_after, action, reason)
+            append_stock_log(conn, component_id, delta, quantity_after, action, reason)
 
         self.file_logger.write_backend(
             "STOCK",
@@ -136,7 +121,7 @@ class StockRepository(BaseRepository):
                     "UPDATE components SET quantity = ?, updated_at = ? WHERE id = ?",
                     (quantity_after, now_text(), component_id),
                 )
-                self._append_stock_log(
+                append_stock_log(
                     conn,
                     component_id,
                     -aggregate["quantity_out"],
@@ -180,7 +165,7 @@ class StockRepository(BaseRepository):
 
     def list_stock_logs(self, component_id: int, page: int = 1, page_size: int = 20) -> dict[str, Any]:
         page = max(1, page)
-        page_size = min(max(1, page_size), 200)
+        page_size = min(max(1, page_size), MAX_STOCK_LOG_PAGE_SIZE)
         where = "1 = 1"
         params: list[Any] = []
         if component_id > 0:
