@@ -144,7 +144,6 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_active ON api_tokens(active);
 CREATE TABLE IF NOT EXISTS led_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     enabled INTEGER NOT NULL DEFAULT 0,
-    default_color TEXT NOT NULL DEFAULT '#00ff00',
     blink_interval_ms INTEGER NOT NULL DEFAULT 500,
     blink_duration_ms INTEGER NOT NULL DEFAULT 10000,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -174,6 +173,7 @@ CREATE TABLE IF NOT EXISTS led_box_mapping (
     box_id INTEGER NOT NULL UNIQUE,
     strip_id INTEGER NOT NULL,
     led_index INTEGER NOT NULL,
+    color TEXT NOT NULL DEFAULT '#00ff00',
     FOREIGN KEY (box_id) REFERENCES boxes(id) ON DELETE CASCADE,
     FOREIGN KEY (strip_id) REFERENCES led_strips(id) ON DELETE CASCADE,
     UNIQUE(strip_id, led_index)
@@ -223,5 +223,9 @@ def init_database(database_path: Path) -> None:
         led_cfg_count = conn.execute("SELECT COUNT(*) FROM led_config").fetchone()[0]
         if led_cfg_count == 0:
             conn.execute("INSERT INTO led_config (id, enabled) VALUES (1, 0)")
+
+        led_mapping_columns = {row[1] for row in conn.execute("PRAGMA table_info(led_box_mapping)").fetchall()}
+        if "color" not in led_mapping_columns:
+            conn.execute("ALTER TABLE led_box_mapping ADD COLUMN color TEXT NOT NULL DEFAULT '#00ff00'")
 
         conn.commit()

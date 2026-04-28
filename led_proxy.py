@@ -61,7 +61,7 @@ class LEDProxy:
                 "gpio": mapping["gpio_num"],
                 "index": mapping["led_index"],
                 "mode": "blink",
-                "color": cfg["default_color"],
+                "color": mapping.get("color") or "#00ff00",
                 "duration_ms": cfg["blink_duration_ms"],
             }]
         })
@@ -70,6 +70,7 @@ class LEDProxy:
             "device_name": mapping["device_name"],
             "gpio": mapping["gpio_num"],
             "led_index": mapping["led_index"],
+            "color": mapping.get("color") or "#00ff00",
             "mode": "blink",
         }
 
@@ -99,7 +100,7 @@ class LEDProxy:
                 "gpio": mapping["gpio_num"],
                 "index": mapping["led_index"],
                 "mode": "blink",
-                "color": cfg["default_color"],
+                "color": mapping.get("color") or "#00ff00",
                 "duration_ms": cfg["blink_duration_ms"],
             })
             resolved.append(box_id)

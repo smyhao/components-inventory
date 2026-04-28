@@ -1783,22 +1783,22 @@ class InventoryRepository:
 
     def get_led_config(self) -> dict[str, Any]:
         with self.connect() as conn:
-            row = self._fetchone(conn, "SELECT * FROM led_config WHERE id = 1")
+            row = self._fetchone(
+                conn,
+                "SELECT id, enabled, blink_interval_ms, blink_duration_ms, updated_at FROM led_config WHERE id = 1",
+            )
             if not row:
-                return {"id": 1, "enabled": 0, "default_color": "#00ff00",
-                        "blink_interval_ms": 500, "blink_duration_ms": 10000}
+                return {"id": 1, "enabled": 0, "blink_interval_ms": 500, "blink_duration_ms": 10000}
             return dict(row)
 
     def update_led_config(self, payload: dict[str, Any]) -> dict[str, Any]:
-        allowed = {"enabled", "default_color", "blink_interval_ms", "blink_duration_ms"}
+        allowed = {"enabled", "blink_interval_ms", "blink_duration_ms"}
         sets: list[str] = []
         params: list[Any] = []
         for key in allowed:
             if key in payload:
                 sets.append(f"{key} = ?")
-                if key == "default_color":
-                    params.append(clean_color(payload[key], "#00ff00"))
-                elif key == "enabled":
+                if key == "enabled":
                     params.append(1 if payload[key] else 0)
                 else:
                     params.append(clean_int(payload[key]))
@@ -1958,7 +1958,7 @@ class InventoryRepository:
         with self.connect() as conn:
             rows = self._fetchall(
                 conn,
-                """SELECT m.id, m.box_id, m.strip_id, m.led_index,
+                """SELECT m.id, m.box_id, m.strip_id, m.led_index, m.color,
                           b.name AS box_name,
                           s.name AS strip_name, s.gpio_num, s.device_id,
                           d.name AS device_name
@@ -1977,6 +1977,7 @@ class InventoryRepository:
                 box_id = clean_int(item.get("box_id"))
                 strip_id = clean_int(item.get("strip_id"))
                 led_index = clean_int(item.get("led_index"))
+                color = clean_color(item.get("color"), "#00ff00")
                 if not box_id or not strip_id:
                     continue
                 box = self._fetchone(conn, "SELECT id FROM boxes WHERE id = ?", (box_id,))
@@ -1994,8 +1995,8 @@ class InventoryRepository:
                 if dup:
                     raise InventoryError(f"灯带 {strip_id} 的 LED {led_index} 已被映射")
                 conn.execute(
-                    "INSERT INTO led_box_mapping (box_id, strip_id, led_index) VALUES (?, ?, ?)",
-                    (box_id, strip_id, led_index),
+                    "INSERT INTO led_box_mapping (box_id, strip_id, led_index, color) VALUES (?, ?, ?, ?)",
+                    (box_id, strip_id, led_index, color),
                 )
         self.file_logger.write_backend("LED", f"save mappings: count={len(mappings)}")
         return self.get_led_mappings()
@@ -2004,7 +2005,7 @@ class InventoryRepository:
         with self.connect() as conn:
             row = self._fetchone(
                 conn,
-                """SELECT m.strip_id, m.led_index,
+                """SELECT m.strip_id, m.led_index, m.color,
                           s.gpio_num, s.device_id,
                           d.name AS device_name, d.host, d.port
                    FROM led_box_mapping m

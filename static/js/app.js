@@ -112,8 +112,9 @@ function app() {
         tokenForm: { name: '' },
         apiTokens: [],
         generatedToken: '',
+        settingsTab: 'token',
 
-        ledConfig: { enabled: false, default_color: '#00ff00', blink_interval_ms: 500, blink_duration_ms: 10000 },
+        ledConfig: { enabled: false, blink_interval_ms: 500, blink_duration_ms: 10000 },
         ledDevices: [],
         ledStrips: [],
         ledMappings: [],
@@ -153,9 +154,14 @@ function app() {
 
         async openSettings() {
             this.modal = 'settings';
+            this.settingsTab = 'token';
             this.generatedToken = '';
             this.tokenForm = { name: '' };
-            await Promise.all([this.loadApiTokens(), this.loadLedConfig()]);
+            await this.loadApiTokens();
+            await this.loadBoxes();
+            await this.loadLedConfig();
+            await this.$nextTick();
+            this.ledMappings = this.normalizeLedMappings(this.ledMappings);
         },
 
         async loadApiTokens() {
@@ -1543,19 +1549,73 @@ function app() {
         async loadLedConfig() {
             try {
                 const data = await api.get('/api/settings/led');
-                this.ledConfig = data.config || this.ledConfig;
+                this.ledConfig = this.normalizeLedConfig(data.config || {});
                 this.ledDevices = data.devices || [];
                 this.ledStrips = data.strips || [];
-                this.ledMappings = data.mappings || [];
+                this.ledMappings = this.normalizeLedMappings(data.mappings || []);
             } catch (err) {
                 this.toast('加载 LED 配置失败：' + err.message, 'error');
+            }
+        },
+
+        normalizeLedConfig(config = {}) {
+            return {
+                enabled: !!Number(config.enabled || 0),
+                blink_interval_ms: Number(config.blink_interval_ms || 500),
+                blink_duration_ms: Number(config.blink_duration_ms || 10000)
+            };
+        },
+
+        normalizeLedColor(color) {
+            const value = String(color || '').trim();
+            return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : '#00ff00';
+        },
+
+        normalizeLedMappings(mappings = []) {
+            return mappings.map((mapping) => ({
+                ...mapping,
+                box_id: mapping.box_id ? Number(mapping.box_id) : '',
+                strip_id: mapping.strip_id ? Number(mapping.strip_id) : '',
+                led_index: Number(mapping.led_index || 0),
+                color: this.normalizeLedColor(mapping.color)
+            }));
+        },
+
+        ledStripLabel(strip) {
+            if (!strip) return '';
+            return `${strip.device_name || '设备#' + strip.device_id} / ${strip.name} / GPIO ${strip.gpio_num}`;
+        },
+
+        nextLedIndex(stripId) {
+            const used = new Set(
+                this.ledMappings
+                    .filter((item) => String(item.strip_id) === String(stripId))
+                    .map((item) => Number(item.led_index))
+                    .filter((value) => Number.isInteger(value) && value >= 0)
+            );
+            const strip = this.ledStrips.find((item) => String(item.id) === String(stripId));
+            const max = Number(strip?.led_count || 0);
+            if (max > 0) {
+                for (let index = 0; index < max; index += 1) {
+                    if (!used.has(index)) return index;
+                }
+            }
+            let index = 0;
+            while (used.has(index)) index += 1;
+            return index;
+        },
+
+        prepareLedMapping(mapping) {
+            mapping.color = this.normalizeLedColor(mapping.color);
+            if (mapping.strip_id && (!Number.isInteger(Number(mapping.led_index)) || Number(mapping.led_index) < 0)) {
+                mapping.led_index = this.nextLedIndex(mapping.strip_id);
             }
         },
 
         async saveLedConfig() {
             try {
                 const result = await api.put('/api/settings/led', this.ledConfig);
-                this.ledConfig = result.config;
+                this.ledConfig = this.normalizeLedConfig(result.config || {});
                 this.toast('LED 配置已保存', 'success');
             } catch (err) {
                 this.toast('保存 LED 配置失败：' + err.message, 'error');
@@ -1688,7 +1748,13 @@ function app() {
         },
 
         addLedMapping() {
-            this.ledMappings.push({ box_id: '', strip_id: '', led_index: 0 });
+            const stripId = this.ledStrips.length === 1 ? Number(this.ledStrips[0].id) : '';
+            this.ledMappings.push({
+                box_id: '',
+                strip_id: stripId,
+                led_index: stripId ? this.nextLedIndex(stripId) : 0,
+                color: '#00ff00'
+            });
         },
 
         removeLedMapping(index) {
@@ -1701,11 +1767,12 @@ function app() {
                 .map((m) => ({
                     box_id: Number(m.box_id),
                     strip_id: Number(m.strip_id),
-                    led_index: Number(m.led_index || 0)
+                    led_index: Number(m.led_index || 0),
+                    color: this.normalizeLedColor(m.color)
                 }));
             try {
                 const result = await api.put('/api/settings/led/mappings', { mappings });
-                this.ledMappings = result.mappings || [];
+                this.ledMappings = this.normalizeLedMappings(result.mappings || []);
                 this.toast('映射已保存', 'success');
             } catch (err) {
                 this.toast('保存映射失败：' + err.message, 'error');
