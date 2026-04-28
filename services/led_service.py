@@ -133,6 +133,82 @@ class LedService:
             "duration_ms": clean_int(config.get("blink_duration_ms"), 10000),
         }
 
+    def create_strip_with_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """创建灯带：先写数据库，再尝试推送到 ESP32。"""
+        strip = self.repo.create_led_strip(payload)
+        device = self._require_device(int(strip["device_id"]))
+        if device.get("enabled"):
+            sync_result = self._try_sync_strip(
+                device, "push", gpio=int(strip["gpio_num"]), led_count=int(strip["led_count"]),
+            )
+            if sync_result and sync_result.get("sync_error"):
+                strip["sync_warning"] = f"数据库已保存，但硬件同步失败：{sync_result['sync_error']}"
+        return strip
+
+    def update_strip_with_sync(self, strip_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        """更新灯带：先写数据库，再尝试推送到 ESP32。"""
+        strip = self.repo.update_led_strip(strip_id, payload)
+        device = self._require_device(int(strip["device_id"]))
+        if device.get("enabled"):
+            sync_result = self._try_sync_strip(
+                device, "push", gpio=int(strip["gpio_num"]), led_count=int(strip["led_count"]),
+            )
+            if sync_result and sync_result.get("sync_error"):
+                strip["sync_warning"] = f"数据库已保存，但硬件同步失败：{sync_result['sync_error']}"
+        return strip
+
+    def delete_strip_with_sync(self, strip_id: int) -> dict[str, Any]:
+        """删除灯带：先从数据库删除，再尝试从 ESP32 移除。"""
+        # 先查出灯带信息以获取 gpio 和 device，供 ESP32 同步使用
+        all_strips = self.repo.list_led_strips()
+        target = next((s for s in all_strips if s["id"] == strip_id), None)
+        if not target:
+            self.repo.delete_led_strip(strip_id)
+            return {"id": strip_id}
+
+        device = self._require_device(int(target["device_id"]))
+        gpio_num = int(target["gpio_num"])
+
+        self.repo.delete_led_strip(strip_id)
+
+        result: dict[str, Any] = {"id": strip_id}
+        if device.get("enabled"):
+            sync_result = self._try_sync_strip(device, "remove", gpio=gpio_num)
+            if sync_result and sync_result.get("sync_error"):
+                result["sync_warning"] = f"数据库已删除，但硬件同步失败：{sync_result['sync_error']}"
+        return result
+
+    def sync_device_strips(self, device_id: int) -> dict[str, Any]:
+        """将指定设备的所有灯带全量同步到 ESP32。"""
+        device = self._require_device(device_id)
+        if not device.get("enabled"):
+            raise InventoryError("LED 设备未启用")
+        strips = self.repo.list_led_strips(device_id=device_id)
+        esp_strips = [{"gpio": int(s["gpio_num"]), "led_count": int(s["led_count"])} for s in strips]
+        sync_result = self._try_sync_strip(
+            device, "sync_all", strips=esp_strips, http_port=int(device.get("port", 80)),
+        )
+        result: dict[str, Any] = {"device_id": device_id, "synced_strips": len(esp_strips)}
+        if sync_result and sync_result.get("sync_error"):
+            result["sync_error"] = sync_result["sync_error"]
+        else:
+            self.file_logger.write_backend("LED", f"全量同步设备灯带: device={device.get('name')}, strips={len(esp_strips)}")
+        return result
+
+    def _try_sync_strip(self, device: dict[str, Any], action: str, **kwargs: Any) -> dict[str, Any] | None:
+        """尝试向 ESP32 同步灯带变更，失败时返回错误信息而不抛出异常。"""
+        try:
+            if action == "push":
+                return self.proxy.push_strip(device, kwargs["gpio"], kwargs["led_count"])
+            if action == "remove":
+                return self.proxy.remove_strip(device, kwargs["gpio"])
+            if action == "sync_all":
+                return self.proxy.push_full_config(device, kwargs["strips"], kwargs.get("http_port", 80))
+        except InventoryError as exc:
+            self.file_logger.write_backend("LED", f"ESP32 同步失败: device={device.get('name')}, action={action}, error={exc}")
+            return {"sync_error": str(exc)}
+        return None
+
     def _unique_ids(self, values: list[Any]) -> list[int]:
         result: list[int] = []
         seen: set[int] = set()

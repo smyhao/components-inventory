@@ -55,26 +55,24 @@ def api_test_led_device(device_id: int):
     return success(_service().test_device(device_id))
 
 
+@led_bp.post("/api/settings/led/devices/<int:device_id>/sync")
+def api_sync_device_strips(device_id: int):
+    return success(_service().sync_device_strips(device_id))
+
+
 @led_bp.post("/api/settings/led/strips")
 def api_create_led_strip():
-    from app import repo
-
-    return success(repo.create_led_strip(request.get_json(silent=True) or {}))
+    return success(_service().create_strip_with_sync(request.get_json(silent=True) or {}))
 
 
 @led_bp.put("/api/settings/led/strips/<int:strip_id>")
 def api_update_led_strip(strip_id: int):
-    from app import repo
-
-    return success(repo.update_led_strip(strip_id, request.get_json(silent=True) or {}))
+    return success(_service().update_strip_with_sync(strip_id, request.get_json(silent=True) or {}))
 
 
 @led_bp.delete("/api/settings/led/strips/<int:strip_id>")
 def api_delete_led_strip(strip_id: int):
-    from app import repo
-
-    repo.delete_led_strip(strip_id)
-    return success({"id": strip_id})
+    return success(_service().delete_strip_with_sync(strip_id))
 
 
 @led_bp.put("/api/settings/led/mappings")

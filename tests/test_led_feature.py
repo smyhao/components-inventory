@@ -18,6 +18,9 @@ class FakeLedProxy:
         self.fail_names = fail_names or set()
         self.set_calls = []
         self.clear_calls = []
+        self.push_strip_calls = []
+        self.remove_strip_calls = []
+        self.push_full_config_calls = []
 
     def health(self, device):
         return {"connected": True, "latency_ms": 12, "strips": [{"gpio": 8, "led_count": 30}]}
@@ -31,6 +34,27 @@ class FakeLedProxy:
     def clear(self, device):
         self.clear_calls.append(device)
         return {"ok": True}
+
+    def get_config(self, device):
+        return {"status": "ok", "strips": [], "http_port": 80}
+
+    def push_strip(self, device, gpio, led_count):
+        if device.get("name") in self.fail_names:
+            raise InventoryError(f"设备 {device.get('name')} 连接失败")
+        self.push_strip_calls.append((device, gpio, led_count))
+        return {"status": "ok", "gpio": gpio, "led_count": led_count}
+
+    def remove_strip(self, device, gpio):
+        if device.get("name") in self.fail_names:
+            raise InventoryError(f"设备 {device.get('name')} 连接失败")
+        self.remove_strip_calls.append((device, gpio))
+        return {"status": "ok", "removed_gpio": gpio}
+
+    def push_full_config(self, device, strips, http_port=80):
+        if device.get("name") in self.fail_names:
+            raise InventoryError(f"设备 {device.get('name')} 连接失败")
+        self.push_full_config_calls.append((device, strips, http_port))
+        return {"status": "ok", "strips": strips}
 
 
 def _led_mapping(repo, sample_box_id):
@@ -170,3 +194,98 @@ def test_led_settings_api(client, sample_box_id):
     )
     assert resp.status_code == 200
     assert resp.get_json()["data"][0]["color"] == "#abcdef"
+
+
+# ── 灯带同步测试 ──
+
+
+def test_create_strip_syncs_to_esp32(repo, file_logger):
+    device = repo.create_led_device({"name": "desk", "host": "192.168.1.50", "port": 80})
+    proxy = FakeLedProxy()
+    service = LedService(repo, file_logger, proxy)
+    strip = service.create_strip_with_sync({"device_id": device["id"], "name": "top", "gpio_num": 8, "led_count": 30})
+    assert "sync_warning" not in strip
+    assert len(proxy.push_strip_calls) == 1
+    assert proxy.push_strip_calls[0][1] == 8
+    assert proxy.push_strip_calls[0][2] == 30
+
+
+def test_create_strip_sync_failure_returns_warning(repo, file_logger):
+    device = repo.create_led_device({"name": "offline", "host": "192.168.1.99", "port": 80})
+    proxy = FakeLedProxy({"offline"})
+    service = LedService(repo, file_logger, proxy)
+    strip = service.create_strip_with_sync({"device_id": device["id"], "name": "top", "gpio_num": 8, "led_count": 30})
+    assert "sync_warning" in strip
+    assert repo.list_led_strips()[0]["gpio_num"] == 8
+
+
+def test_create_strip_skips_sync_when_device_disabled(repo, file_logger):
+    device = repo.create_led_device({"name": "desk", "host": "192.168.1.50", "port": 80, "enabled": False})
+    proxy = FakeLedProxy()
+    service = LedService(repo, file_logger, proxy)
+    strip = service.create_strip_with_sync({"device_id": device["id"], "name": "top", "gpio_num": 8, "led_count": 30})
+    assert "sync_warning" not in strip
+    assert len(proxy.push_strip_calls) == 0
+
+
+def test_update_strip_syncs_to_esp32(repo, file_logger):
+    device = repo.create_led_device({"name": "desk", "host": "192.168.1.50", "port": 80})
+    strip = repo.create_led_strip({"device_id": device["id"], "name": "top", "gpio_num": 8, "led_count": 10})
+    proxy = FakeLedProxy()
+    service = LedService(repo, file_logger, proxy)
+    updated = service.update_strip_with_sync(strip["id"], {"device_id": device["id"], "name": "top", "gpio_num": 8, "led_count": 30})
+    assert "sync_warning" not in updated
+    assert proxy.push_strip_calls[0][2] == 30
+
+
+def test_delete_strip_syncs_to_esp32(repo, file_logger):
+    device = repo.create_led_device({"name": "desk", "host": "192.168.1.50", "port": 80})
+    strip = repo.create_led_strip({"device_id": device["id"], "name": "top", "gpio_num": 8, "led_count": 10})
+    proxy = FakeLedProxy()
+    service = LedService(repo, file_logger, proxy)
+    result = service.delete_strip_with_sync(strip["id"])
+    assert "sync_warning" not in result
+    assert len(proxy.remove_strip_calls) == 1
+    assert proxy.remove_strip_calls[0][1] == 8
+    assert repo.list_led_strips() == []
+
+
+def test_delete_strip_sync_failure_returns_warning(repo, file_logger):
+    device = repo.create_led_device({"name": "offline", "host": "192.168.1.99", "port": 80})
+    strip = repo.create_led_strip({"device_id": device["id"], "name": "top", "gpio_num": 8, "led_count": 10})
+    proxy = FakeLedProxy({"offline"})
+    service = LedService(repo, file_logger, proxy)
+    result = service.delete_strip_with_sync(strip["id"])
+    assert "sync_warning" in result
+    assert repo.list_led_strips() == []
+
+
+def test_sync_device_strips_sends_full_config(repo, file_logger):
+    device = repo.create_led_device({"name": "desk", "host": "192.168.1.50", "port": 80})
+    repo.create_led_strip({"device_id": device["id"], "name": "a", "gpio_num": 8, "led_count": 30})
+    repo.create_led_strip({"device_id": device["id"], "name": "b", "gpio_num": 6, "led_count": 20})
+    proxy = FakeLedProxy()
+    service = LedService(repo, file_logger, proxy)
+    result = service.sync_device_strips(device["id"])
+    assert result["synced_strips"] == 2
+    assert len(proxy.push_full_config_calls) == 1
+    strips = proxy.push_full_config_calls[0][1]
+    assert {"gpio": 8, "led_count": 30} in strips
+    assert {"gpio": 6, "led_count": 20} in strips
+
+
+def test_sync_device_strips_reports_esp32_error(repo, file_logger):
+    device = repo.create_led_device({"name": "offline", "host": "192.168.1.99", "port": 80})
+    repo.create_led_strip({"device_id": device["id"], "name": "a", "gpio_num": 8, "led_count": 30})
+    proxy = FakeLedProxy({"offline"})
+    service = LedService(repo, file_logger, proxy)
+    result = service.sync_device_strips(device["id"])
+    assert "sync_error" in result
+
+
+def test_sync_device_strips_requires_enabled_device(repo, file_logger):
+    device = repo.create_led_device({"name": "desk", "host": "192.168.1.50", "port": 80, "enabled": False})
+    proxy = FakeLedProxy()
+    service = LedService(repo, file_logger, proxy)
+    with pytest.raises(InventoryError, match="未启用"):
+        service.sync_device_strips(device["id"])

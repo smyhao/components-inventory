@@ -138,6 +138,7 @@ function app() {
         ledStripForm: null,
         ledTestResults: {},
         ledTestLoading: {},
+        ledSyncLoading: {},
         ledClearLoading: false,
         ledClearMessage: '',
         ledPowerOffLoading: false,
@@ -417,6 +418,22 @@ function app() {
             }
         },
 
+        async syncDeviceStrips(deviceId) {
+            this.ledSyncLoading[deviceId] = true;
+            try {
+                const result = await api.post(`/api/settings/led/devices/${deviceId}/sync`, {});
+                if (result?.sync_error) {
+                    this.toast('全量同步失败：' + result.sync_error, 'error');
+                } else {
+                    this.toast(`已同步 ${result?.synced_strips || 0} 条灯带到设备`, 'success');
+                }
+            } catch (err) {
+                this.toast('全量同步失败：' + err.message, 'error');
+            } finally {
+                this.ledSyncLoading[deviceId] = false;
+            }
+        },
+
         createLedStrip() {
             const firstDevice = this.ledDevices[0];
             this.ledStripForm = { ...emptyLedStripForm(), device_id: firstDevice?.id || '' };
@@ -443,11 +460,16 @@ function app() {
                     gpio_num: Number(form.gpio_num || 0),
                     led_count: Number(form.led_count || 0)
                 };
-                if (payload.id) await api.put(`/api/settings/led/strips/${payload.id}`, payload);
-                else await api.post('/api/settings/led/strips', payload);
+                let result;
+                if (payload.id) result = await api.put(`/api/settings/led/strips/${payload.id}`, payload);
+                else result = await api.post('/api/settings/led/strips', payload);
                 this.ledStripForm = null;
                 await this.loadLedConfig();
-                this.toast('LED 灯带已保存', 'success');
+                if (result?.sync_warning) {
+                    this.toast('灯带已保存但硬件同步失败：' + result.sync_warning, 'warning');
+                } else {
+                    this.toast('LED 灯带已保存', 'success');
+                }
             } catch (err) {
                 this.toast('保存 LED 灯带失败：' + err.message, 'error');
             }
@@ -456,9 +478,13 @@ function app() {
         async deleteLedStrip(strip) {
             if (!strip?.id || !confirm(`删除灯带「${strip.name}」？相关映射会一并删除。`)) return;
             try {
-                await api.del(`/api/settings/led/strips/${strip.id}`);
+                const result = await api.del(`/api/settings/led/strips/${strip.id}`);
                 await this.loadLedConfig();
-                this.toast('LED 灯带已删除', 'success');
+                if (result?.sync_warning) {
+                    this.toast('灯带已删除但硬件同步失败：' + result.sync_warning, 'warning');
+                } else {
+                    this.toast('LED 灯带已删除', 'success');
+                }
             } catch (err) {
                 this.toast('删除 LED 灯带失败：' + err.message, 'error');
             }

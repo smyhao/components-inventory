@@ -828,6 +828,7 @@
                                     </div>
                                     <div class="toolbar-actions">
                                         <button class="btn btn-secondary" @click="testLedDevice(device.id)" x-text="ledTestLoading[device.id] ? '...' : '测试'"></button>
+                                        <button class="btn btn-secondary" @click="syncDeviceStrips(device.id)" x-text="ledSyncLoading[device.id] ? '...' : '同步'"></button>
                                         <button class="btn btn-secondary" @click="editLedDevice(device)">编辑</button>
                                         <button class="btn btn-danger" @click="deleteLedDevice(device)">删除</button>
                                     </div>

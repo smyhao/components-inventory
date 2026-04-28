@@ -28,6 +28,22 @@ class LedProxy:
     def clear(self, device: dict[str, Any]) -> dict[str, Any]:
         return self._request_json(device, "POST", "/api/led/clear", {})
 
+    def get_config(self, device: dict[str, Any]) -> dict[str, Any]:
+        """读取 ESP32 当前灯带配置。"""
+        return self._request_json(device, "GET", "/api/config")
+
+    def push_strip(self, device: dict[str, Any], gpio: int, led_count: int) -> dict[str, Any]:
+        """向 ESP32 添加/更新单条灯带，立即热重载。"""
+        return self._request_json(device, "POST", "/api/config/strip", {"gpio": gpio, "led_count": led_count})
+
+    def remove_strip(self, device: dict[str, Any], gpio: int) -> dict[str, Any]:
+        """向 ESP32 删除单条灯带，立即热重载。"""
+        return self._request_json(device, "POST", "/api/config/strip/remove", {"gpio": gpio})
+
+    def push_full_config(self, device: dict[str, Any], strips: list[dict[str, Any]], http_port: int = 80) -> dict[str, Any]:
+        """向 ESP32 推送完整灯带配置，立即热重载（用于批量同步）。"""
+        return self._request_json(device, "POST", "/api/config", {"strips": strips, "http_port": http_port})
+
     def _request_json(
         self,
         device: dict[str, Any],

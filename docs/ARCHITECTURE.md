@@ -89,8 +89,8 @@ components-inventory/
 │   ├── bom_service.py      #   BOM CSV 解析 + 元器件匹配算法
 │   ├── import_service.py   #   元器件导入/导出（回调式 repo 访问）
 │   ├── label_service.py    #   QR 码 SVG + 标签打印页生成
-│   ├── led_service.py      #   LED 定位业务编排 + 按设备分组
-│   └── led_proxy.py        #   ESP32 HTTP 代理、超时与错误转换
+│   ├── led_service.py      #   LED 定位业务编排 + 灯带同步到 ESP32
+│   └── led_proxy.py        #   ESP32 HTTP 代理（LED 控制 + 配置同步）
 │
 ├── repositories/           # 仓储层 — 原生 SQL 数据访问
 │   ├── __init__.py         #   导出所有仓储类
@@ -127,7 +127,7 @@ components-inventory/
 │   ├── config.py           #   配置文件管理（多 profile）
 │   └── errors.py           #   错误类定义
 │
-├── tests/                  # pytest 测试套件（119 个测试）
+├── tests/                  # pytest 测试套件（128 个测试）
 │   ├── conftest.py         #   共享 fixtures
 │   ├── test_categories_api.py
 │   ├── test_cabinets_api.py
@@ -422,9 +422,10 @@ led_box_mapping     收纳盒到 LED 的唯一映射
 | PUT | `/api/settings/led/devices/<id>` | 更新设备 |
 | DELETE | `/api/settings/led/devices/<id>` | 删除设备，并级联删除灯带和映射 |
 | POST | `/api/settings/led/devices/<id>/test` | 通过 ESP32 `/api/health` 测试连接 |
-| POST | `/api/settings/led/strips` | 创建灯带 |
-| PUT | `/api/settings/led/strips/<id>` | 更新灯带 |
-| DELETE | `/api/settings/led/strips/<id>` | 删除灯带，并级联删除映射 |
+| POST | `/api/settings/led/devices/<id>/sync` | 全量同步设备灯带到 ESP32 |
+| POST | `/api/settings/led/strips` | 创建灯带（自动同步到 ESP32） |
+| PUT | `/api/settings/led/strips/<id>` | 更新灯带（自动同步到 ESP32） |
+| DELETE | `/api/settings/led/strips/<id>` | 删除灯带，并级联删除映射（自动从 ESP32 移除） |
 | PUT | `/api/settings/led/mappings` | 全量保存收纳盒到 LED 映射 |
 | POST | `/api/led/locate/box/<id>` | 定位单个收纳盒 |
 | POST | `/api/led/locate/component/<id>` | 定位元器件所在收纳盒 |
@@ -509,6 +510,16 @@ LED 定位由 Flask 作为局域网代理：前端触发定位按钮 → `routes
 - 设备连接测试失败时返回 `{connected: false, error: "..."}`，不会让前端收到 500。
 - 前端设置弹窗包含 `设备 Token` 与 `LED 定位` 两个标签页，定位入口仅在 `ledConfig.enabled` 为真时显示。
 
+### 8.6 灯带远程配置同步
+
+灯带 CRUD 操作（创建、更新、删除）在保存到数据库后，自动同步到 ESP32 硬件。同步通过 `LedProxy` 调用 ESP32 的 `/api/config/strip` 和 `/api/config/strip/remove` 端点实现。
+
+同步策略：
+
+- 数据库为主、ESP32 为从。DB 保存始终成功，ESP32 同步失败时响应中附加 `sync_warning` 字段，不回滚数据库。
+- 设备禁用时跳过同步，不产生警告。
+- 设备卡片提供"同步"按钮，通过 `POST /api/settings/led/devices/<id>/sync` 端点调用 ESP32 `/api/config` 进行全量同步，将数据库中该设备的所有灯带一次性推送到硬件。
+
 ---
 
 ## 9. 测试
@@ -532,7 +543,7 @@ python -m pytest tests/ -v
 
 ### 测试覆盖
 
-119 个测试覆盖所有 API 端点，包括正常流程和错误场景。按领域分为 14 个文件：
+128 个测试覆盖所有 API 端点，包括正常流程和错误场景。按领域分为 14 个文件：
 
 | 文件 | 覆盖 | 用例数 |
 |---|---|---|
@@ -549,7 +560,7 @@ python -m pytest tests/ -v
 | test_map_api.py | 地图数据/背景/搜索 | 8 |
 | test_bom_api.py | BOM 导入/领料/导出 | 8 |
 | test_frontend_log_api.py | 前端日志上报 | 4 |
-| test_led_feature.py | LED 表初始化、仓储、服务和 API | 9 |
+| test_led_feature.py | LED 表初始化、仓储、服务、API 和灯带同步 | 19 |
 
 ### 添加新测试
 
