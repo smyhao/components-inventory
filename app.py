@@ -15,7 +15,6 @@ from config import (
     ensure_runtime_directories,
 )
 from init_db import init_database
-from led_proxy import LEDProxy
 from logger import FileLogger
 from models import InventoryError, InventoryRepository
 from routes import register_blueprints
@@ -28,7 +27,6 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 file_logger = FileLogger(LOG_FILE, FRONTEND_LOG_FILE)
 repo = InventoryRepository(DATABASE_PATH, file_logger, UPLOAD_FOLDER)
-led_proxy = LEDProxy(repo)
 file_logger.write_backend("SYSTEM", "backend initialized")
 
 register_blueprints(app)
