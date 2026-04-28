@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# 本文件提供仓储外观和共享清洗工具，路由与服务层通过 InventoryRepository 访问各子仓储。
+
 import re
 from datetime import datetime
 from pathlib import Path
@@ -107,6 +109,7 @@ class InventoryRepository:
         from repositories.stock_repo import StockRepository
         from repositories.document_repo import DocumentRepository
         from repositories.nfc_repo import NfcRepository
+        from repositories.led_repository import LedRepository
 
         self._token_repo = TokenRepository(db_path, file_logger)
         self._category_repo = CategoryRepository(db_path, file_logger)
@@ -116,6 +119,7 @@ class InventoryRepository:
         self._stock_repo = StockRepository(db_path, file_logger)
         self._document_repo = DocumentRepository(db_path, file_logger, upload_folder)
         self._nfc_repo = NfcRepository(db_path, file_logger, self._box_repo)
+        self._led_repo = LedRepository(db_path, file_logger)
 
     # --- Token ---
     def has_api_tokens(self) -> bool:
@@ -263,3 +267,46 @@ class InventoryRepository:
 
     def lookup_nfc(self, uid: str) -> dict[str, Any]:
         return self._nfc_repo.lookup_nfc(uid)
+
+    # --- LED ---
+    def get_led_config(self) -> dict[str, Any]:
+        return self._led_repo.get_led_config()
+
+    def update_led_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._led_repo.update_led_config(payload)
+
+    def list_led_devices(self) -> list[dict[str, Any]]:
+        return self._led_repo.list_led_devices()
+
+    def get_led_device(self, device_id: int) -> dict[str, Any] | None:
+        return self._led_repo.get_led_device(device_id)
+
+    def create_led_device(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._led_repo.create_led_device(payload)
+
+    def update_led_device(self, device_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._led_repo.update_led_device(device_id, payload)
+
+    def delete_led_device(self, device_id: int) -> None:
+        self._led_repo.delete_led_device(device_id)
+
+    def list_led_strips(self, device_id: int | None = None) -> list[dict[str, Any]]:
+        return self._led_repo.list_led_strips(device_id)
+
+    def create_led_strip(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._led_repo.create_led_strip(payload)
+
+    def update_led_strip(self, strip_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._led_repo.update_led_strip(strip_id, payload)
+
+    def delete_led_strip(self, strip_id: int) -> None:
+        self._led_repo.delete_led_strip(strip_id)
+
+    def get_led_mappings(self) -> list[dict[str, Any]]:
+        return self._led_repo.get_led_mappings()
+
+    def save_led_mappings(self, mappings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return self._led_repo.save_led_mappings(mappings)
+
+    def find_led_by_box(self, box_id: int) -> dict[str, Any] | None:
+        return self._led_repo.find_led_by_box(box_id)

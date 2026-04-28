@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# 本文件负责前后端日志落盘和重要日志过滤，是应用运行记录的基础设施层。
+
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
@@ -13,6 +15,7 @@ IMPORTANT_BACKEND_TAGS = {
     "STOCK",
     "NFC",
     "BOM",
+    "LED",
 }
 
 SUPPRESSED_BACKEND_PATTERNS = (

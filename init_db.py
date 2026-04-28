@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# 本文件负责集中初始化 SQLite 结构和兼容迁移，所有数据库表定义都应在这里收口。
+
 import sqlite3
 from pathlib import Path
 
@@ -131,6 +133,44 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     active INTEGER NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS led_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    blink_interval_ms INTEGER NOT NULL DEFAULT 500,
+    blink_duration_ms INTEGER NOT NULL DEFAULT 10000,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS led_devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 80,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS led_strips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    gpio_num INTEGER NOT NULL,
+    led_count INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (device_id) REFERENCES led_devices(id) ON DELETE CASCADE,
+    UNIQUE(device_id, gpio_num)
+);
+
+CREATE TABLE IF NOT EXISTS led_box_mapping (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    box_id INTEGER NOT NULL UNIQUE,
+    strip_id INTEGER NOT NULL,
+    led_index INTEGER NOT NULL,
+    color TEXT NOT NULL DEFAULT '#00ff00',
+    FOREIGN KEY (box_id) REFERENCES boxes(id) ON DELETE CASCADE,
+    FOREIGN KEY (strip_id) REFERENCES led_strips(id) ON DELETE CASCADE,
+    UNIQUE(strip_id, led_index)
+);
+
 CREATE INDEX IF NOT EXISTS idx_components_name ON components(name);
 CREATE INDEX IF NOT EXISTS idx_components_model ON components(model);
 CREATE INDEX IF NOT EXISTS idx_components_category_id ON components(category_id);
@@ -144,6 +184,8 @@ CREATE INDEX IF NOT EXISTS idx_documents_component_id ON documents(component_id)
 CREATE INDEX IF NOT EXISTS idx_images_component_id ON images(component_id);
 CREATE INDEX IF NOT EXISTS idx_component_tags_tag_id ON component_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_active ON api_tokens(active);
+CREATE INDEX IF NOT EXISTS idx_led_strips_device_id ON led_strips(device_id);
+CREATE INDEX IF NOT EXISTS idx_led_box_mapping_strip_id ON led_box_mapping(strip_id);
 """
 
 
@@ -180,6 +222,15 @@ def init_database(database_path: Path) -> None:
             conn.execute("ALTER TABLE boxes ADD COLUMN cabinet_slot INTEGER DEFAULT 0")
         conn.execute("UPDATE boxes SET color = '#84b59b' WHERE color IS NULL OR TRIM(color) = ''")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_boxes_cabinet_id ON boxes(cabinet_id)")
+
+        led_mapping_columns = {row[1] for row in conn.execute("PRAGMA table_info(led_box_mapping)").fetchall()}
+        if "color" not in led_mapping_columns:
+            conn.execute("ALTER TABLE led_box_mapping ADD COLUMN color TEXT NOT NULL DEFAULT '#00ff00'")
+        conn.execute("UPDATE led_box_mapping SET color = '#00ff00' WHERE color IS NULL OR TRIM(color) = ''")
+
+        led_config_count = conn.execute("SELECT COUNT(*) FROM led_config").fetchone()[0]
+        if led_config_count == 0:
+            conn.execute("INSERT INTO led_config (id, enabled) VALUES (1, 0)")
 
         existing = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
         if existing == 0:

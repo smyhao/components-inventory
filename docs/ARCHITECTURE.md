@@ -19,12 +19,12 @@
 ┌───────────────────────▼──────────────────────────────┐
 │  路由层 (routes/)          — Flask 蓝图，请求解析       │
 │  pages / categories / cabinets / boxes / components   │
-│  stock_operations / tags / nfc / map / bom / auth     │
+│  stock_operations / tags / nfc / map / bom / auth / led│
 └───────────────────────┬──────────────────────────────┘
                         │
 ┌───────────────────────▼──────────────────────────────┐
 │  服务层 (services/)        — 纯 Python 业务逻辑        │
-│  bom_service / import_service / label_service         │
+│  bom_service / import_service / label_service / led_*  │
 │  _parsing (共享文件解析工具)                            │
 └───────────────────────┬──────────────────────────────┘
                         │
@@ -35,7 +35,7 @@
                         │
 ┌───────────────────────▼──────────────────────────────┐
 │  仓储层 (repositories/)    — 原生 SQL 数据访问         │
-│  component_repo / box_repo / stock_repo / ...         │
+│  component_repo / box_repo / stock_repo / led_repo / ...│
 │  _utils (共享 URL/文件/库存日志工具)                    │
 │  base (连接管理、事务、WAL 模式)                        │
 └───────────────────────┬──────────────────────────────┘
@@ -67,7 +67,7 @@ components-inventory/
 ├── inventory_cli.py        # CLI 工具入口
 ├── requirements.txt        # Python 依赖
 │
-├── routes/                 # 路由层 — 11 个 Flask 蓝图
+├── routes/                 # 路由层 — 12 个 Flask 蓝图
 │   ├── __init__.py         #   register_blueprints()
 │   ├── _utils.py           #   success() / failure() / excel_response()
 │   ├── pages.py            #   前端页面 + QR 标签打印
@@ -80,14 +80,17 @@ components-inventory/
 │   ├── nfc.py              #   NFC 绑定/写入/查询
 │   ├── map.py              #   地图数据 + 背景 + 搜索
 │   ├── bom.py              #   BOM 导入/领料/导出
-│   └── auth.py             #   Token 管理 + 认证中间件 + 前端日志
+│   ├── auth.py             #   Token 管理 + 认证中间件 + 前端日志
+│   └── led.py              #   LED 设置、设备测试、定位和清除 API
 │
 ├── services/               # 服务层 — 可独立测试的纯函数
 │   ├── __init__.py
 │   ├── _parsing.py         #   共享解析工具（CSV/XLSX 解码、表头映射）
 │   ├── bom_service.py      #   BOM CSV 解析 + 元器件匹配算法
 │   ├── import_service.py   #   元器件导入/导出（回调式 repo 访问）
-│   └── label_service.py    #   QR 码 SVG + 标签打印页生成
+│   ├── label_service.py    #   QR 码 SVG + 标签打印页生成
+│   ├── led_service.py      #   LED 定位业务编排 + 按设备分组
+│   └── led_proxy.py        #   ESP32 HTTP 代理、超时与错误转换
 │
 ├── repositories/           # 仓储层 — 原生 SQL 数据访问
 │   ├── __init__.py         #   导出所有仓储类
@@ -100,7 +103,8 @@ components-inventory/
 │   ├── component_repo.py   #   ComponentRepository（最大，33+ 方法）
 │   ├── stock_repo.py       #   StockRepository（3 方法）
 │   ├── document_repo.py    #   DocumentRepository（4 方法）
-│   └── nfc_repo.py         #   NfcRepository（3 方法）
+│   ├── nfc_repo.py         #   NfcRepository（3 方法）
+│   └── led_repository.py   #   LedRepository（配置/设备/灯带/映射）
 │
 ├── models.py               # InventoryRepository — 薄外观，委托给子仓储
 │
@@ -123,7 +127,7 @@ components-inventory/
 │   ├── config.py           #   配置文件管理（多 profile）
 │   └── errors.py           #   错误类定义
 │
-├── tests/                  # pytest 测试套件（110 个测试）
+├── tests/                  # pytest 测试套件（119 个测试）
 │   ├── conftest.py         #   共享 fixtures
 │   ├── test_categories_api.py
 │   ├── test_cabinets_api.py
@@ -161,7 +165,7 @@ ensure_runtime_directories()  →  创建 data/uploads/log 目录
 init_database(DATABASE_PATH)  →  初始化 SQLite（建表+WAL+索引）
 Flask(__name__)               →  创建 Flask 应用
 FileLogger(...)               →  创建日志器
-InventoryRepository(...)      →  创建仓储外观（内含 8 个子仓储）
+InventoryRepository(...)      →  创建仓储外观（内含 9 个子仓储）
 register_blueprints(app)      →  注册 11 个蓝图
 app.run(host, port)           →  启动服务
 ```
@@ -190,7 +194,7 @@ app.run(host, port)           →  启动服务
 
 ### 4.3 init_db.py — 数据库初始化
 
-11 张表 + 13 个索引，初始化时自动创建。
+15 张表 + 15 个索引，初始化时自动创建。
 
 创建流程：`PRAGMA journal_mode=WAL` → `PRAGMA busy_timeout=5000` → 建表 → 建索引 → 迁移检查 → 插入默认分类。
 
@@ -216,7 +220,8 @@ InventoryRepository
   ├── _component_repo  → ComponentRepository
   ├── _stock_repo      → StockRepository
   ├── _document_repo   → DocumentRepository
-  └── _nfc_repo        → NfcRepository
+  ├── _nfc_repo        → NfcRepository
+  └── _led_repo        → LedRepository
 ```
 
 外部调用者（routes、CLI）只与 `InventoryRepository` 交互，不直接引用子仓储。
@@ -275,12 +280,28 @@ stock_logs          库存变更日志
 api_tokens          API 认证令牌
 ├── id, name (UNIQUE), token_hash (UNIQUE)
 ├── token_prefix, created_at, last_used_at, active
+
+led_config          LED 定位全局配置
+├── id=1, enabled, blink_interval_ms, blink_duration_ms, updated_at
+
+led_devices         ESP32 LED 控制设备
+├── id, name (UNIQUE), host, port, enabled, created_at
+
+led_strips          设备下挂载的灯带
+├── id, device_id → led_devices, name, gpio_num, led_count
+├── UNIQUE(device_id, gpio_num)
+
+led_box_mapping     收纳盒到 LED 的唯一映射
+├── id, box_id → boxes, strip_id → led_strips, led_index, color
+├── UNIQUE(box_id), UNIQUE(strip_id, led_index)
 ```
 
 ### 5.2 关键约束
 
 - `components.compartment_id` 为 `UNIQUE`，一个格子只能放一个元器件
 - `boxes.nfc_uid` 为 `UNIQUE`，一个 NFC 标签只能绑定一个收纳盒
+- `led_box_mapping.box_id` 为 `UNIQUE`，一个收纳盒只能映射一个 LED
+- `led_box_mapping(strip_id, led_index)` 为 `UNIQUE`，同一灯带同一 LED 只能映射一个收纳盒
 - 所有外键启用 `PRAGMA foreign_keys = ON`
 - 删除收纳盒时级联删除格子（`ON DELETE CASCADE`）
 - 删除元器件时级联删除图片、文档、库存日志、标签关联
@@ -391,6 +412,26 @@ api_tokens          API 认证令牌
 | DELETE | `/api/settings/tokens/<id>` | 删除 Token |
 | POST | `/api/frontend/log` | 前端日志上报 |
 
+### LED 定位
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/settings/led` | 获取 LED 配置、设备、灯带和映射 |
+| PUT | `/api/settings/led` | 更新 LED 全局开关和闪烁参数 |
+| POST | `/api/settings/led/devices` | 创建设备 |
+| PUT | `/api/settings/led/devices/<id>` | 更新设备 |
+| DELETE | `/api/settings/led/devices/<id>` | 删除设备，并级联删除灯带和映射 |
+| POST | `/api/settings/led/devices/<id>/test` | 通过 ESP32 `/api/health` 测试连接 |
+| POST | `/api/settings/led/strips` | 创建灯带 |
+| PUT | `/api/settings/led/strips/<id>` | 更新灯带 |
+| DELETE | `/api/settings/led/strips/<id>` | 删除灯带，并级联删除映射 |
+| PUT | `/api/settings/led/mappings` | 全量保存收纳盒到 LED 映射 |
+| POST | `/api/led/locate/box/<id>` | 定位单个收纳盒 |
+| POST | `/api/led/locate/component/<id>` | 定位元器件所在收纳盒 |
+| POST | `/api/led/locate/bom` | 按 BOM 涉及收纳盒批量定位 |
+| POST | `/api/led/clear` | 清除所有启用 LED 设备 |
+| POST | `/api/led/clear/<device_id>` | 清除单台 LED 设备 |
+
 ### 页面
 
 | 方法 | 路径 | 说明 |
@@ -457,6 +498,17 @@ CLI 来源识别：请求头 `X-Inventory-Source: inventory-cli` 可跳过 Token
 2. 指定 `cell_row`（实际上是 compartment_id）
 3. 指定 `cell_row` + `cell_col`（通过行列坐标查找格子）
 
+### 8.5 LED 定位
+
+LED 定位由 Flask 作为局域网代理：前端触发定位按钮 → `routes/led.py` 解析请求 → `LedService` 查询 `InventoryRepository` → `LedRepository` 读取设备、灯带和盒子映射 → `LedProxy` 向 ESP32 发送 `/api/led/set` 或 `/api/led/clear`。
+
+关键约束：
+
+- 全局开关和闪烁参数存储在 `led_config`，颜色属于每条 `led_box_mapping`。
+- 单盒和元器件定位发送单条 LED 指令；BOM 定位按 `device_id` 分组，每台 ESP32 只发送一次请求。
+- 设备连接测试失败时返回 `{connected: false, error: "..."}`，不会让前端收到 500。
+- 前端设置弹窗包含 `设备 Token` 与 `LED 定位` 两个标签页，定位入口仅在 `ledConfig.enabled` 为真时显示。
+
 ---
 
 ## 9. 测试
@@ -480,7 +532,7 @@ python -m pytest tests/ -v
 
 ### 测试覆盖
 
-110 个测试覆盖所有 API 端点，包括正常流程和错误场景。按领域分为 13 个文件：
+119 个测试覆盖所有 API 端点，包括正常流程和错误场景。按领域分为 14 个文件：
 
 | 文件 | 覆盖 | 用例数 |
 |---|---|---|
@@ -497,6 +549,7 @@ python -m pytest tests/ -v
 | test_map_api.py | 地图数据/背景/搜索 | 8 |
 | test_bom_api.py | BOM 导入/领料/导出 | 8 |
 | test_frontend_log_api.py | 前端日志上报 | 4 |
+| test_led_feature.py | LED 表初始化、仓储、服务和 API | 9 |
 
 ### 添加新测试
 
