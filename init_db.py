@@ -238,4 +238,13 @@ def init_database(database_path: Path) -> None:
                 "INSERT INTO categories (name, parent_id, icon) VALUES (?, NULL, NULL)",
                 [(name,) for name in DEFAULT_CATEGORIES],
             )
+
+        led_cfg_count = conn.execute("SELECT COUNT(*) FROM led_config").fetchone()[0]
+        if led_cfg_count == 0:
+            conn.execute("INSERT INTO led_config (id, enabled) VALUES (1, 0)")
+
+        led_mapping_columns = {row[1] for row in conn.execute("PRAGMA table_info(led_box_mapping)").fetchall()}
+        if "color" not in led_mapping_columns:
+            conn.execute("ALTER TABLE led_box_mapping ADD COLUMN color TEXT NOT NULL DEFAULT '#00ff00'")
+
         conn.commit()

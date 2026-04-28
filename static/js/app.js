@@ -175,6 +175,7 @@ function app() {
 
         async openSettings() {
             this.modal = 'settings';
+            this.settingsTab = 'token';
             this.generatedToken = '';
             this.tokenForm = { name: '' };
             this.settingsTab = 'token';
@@ -1857,6 +1858,292 @@ function app() {
             } catch (err) {
                 this.nfcStatus = { type: 'error', title: '写入失败', message: err.message };
                 logAction('NFC', '写入失败：' + err.message);
+            }
+        },
+
+        // ── LED 定位 ──────────────────────────────────────────
+
+        async loadLedConfig() {
+            try {
+                const data = await api.get('/api/settings/led');
+                this.ledConfig = this.normalizeLedConfig(data.config || {});
+                this.ledDevices = data.devices || [];
+                this.ledStrips = data.strips || [];
+                this.ledMappings = this.normalizeLedMappings(data.mappings || []);
+            } catch (err) {
+                this.toast('加载 LED 配置失败：' + err.message, 'error');
+            }
+        },
+
+        normalizeLedConfig(config = {}) {
+            return {
+                enabled: !!Number(config.enabled || 0),
+                blink_interval_ms: Number(config.blink_interval_ms || 500),
+                blink_duration_ms: Number(config.blink_duration_ms || 10000)
+            };
+        },
+
+        normalizeLedColor(color) {
+            const value = String(color || '').trim();
+            return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : '#00ff00';
+        },
+
+        normalizeLedMappings(mappings = []) {
+            return mappings.map((mapping) => ({
+                ...mapping,
+                box_id: mapping.box_id ? Number(mapping.box_id) : '',
+                strip_id: mapping.strip_id ? Number(mapping.strip_id) : '',
+                led_index: Number(mapping.led_index || 0),
+                color: this.normalizeLedColor(mapping.color)
+            }));
+        },
+
+        ledStripLabel(strip) {
+            if (!strip) return '';
+            return `${strip.device_name || '设备#' + strip.device_id} / ${strip.name} / GPIO ${strip.gpio_num}`;
+        },
+
+        nextLedIndex(stripId) {
+            const used = new Set(
+                this.ledMappings
+                    .filter((item) => String(item.strip_id) === String(stripId))
+                    .map((item) => Number(item.led_index))
+                    .filter((value) => Number.isInteger(value) && value >= 0)
+            );
+            const strip = this.ledStrips.find((item) => String(item.id) === String(stripId));
+            const max = Number(strip?.led_count || 0);
+            if (max > 0) {
+                for (let index = 0; index < max; index += 1) {
+                    if (!used.has(index)) return index;
+                }
+            }
+            let index = 0;
+            while (used.has(index)) index += 1;
+            return index;
+        },
+
+        prepareLedMapping(mapping) {
+            mapping.color = this.normalizeLedColor(mapping.color);
+            if (mapping.strip_id && (!Number.isInteger(Number(mapping.led_index)) || Number(mapping.led_index) < 0)) {
+                mapping.led_index = this.nextLedIndex(mapping.strip_id);
+            }
+        },
+
+        async saveLedConfig() {
+            try {
+                const result = await api.put('/api/settings/led', this.ledConfig);
+                this.ledConfig = this.normalizeLedConfig(result.config || {});
+                this.toast('LED 配置已保存', 'success');
+            } catch (err) {
+                this.toast('保存 LED 配置失败：' + err.message, 'error');
+            }
+        },
+
+        createLedDevice() {
+            this.ledDeviceForm = { name: '', host: '', port: 80, enabled: true };
+        },
+
+        editLedDevice(device) {
+            this.ledDeviceForm = { ...device };
+        },
+
+        cancelLedDeviceForm() {
+            this.ledDeviceForm = null;
+        },
+
+        async saveLedDevice() {
+            const form = this.ledDeviceForm;
+            if (!form) return;
+            if (!String(form.name || '').trim()) {
+                this.toast('请填写设备名称', 'warning');
+                return;
+            }
+            if (!String(form.host || '').trim()) {
+                this.toast('请填写设备地址', 'warning');
+                return;
+            }
+            try {
+                const payload = {
+                    name: form.name.trim(),
+                    host: form.host.trim(),
+                    port: Number(form.port || 80),
+                    enabled: form.enabled ? 1 : 0
+                };
+                if (form.id) {
+                    await api.put(`/api/settings/led/devices/${form.id}`, payload);
+                    this.toast('设备已更新', 'success');
+                } else {
+                    await api.post('/api/settings/led/devices', payload);
+                    this.toast('设备已添加', 'success');
+                }
+                this.ledDeviceForm = null;
+                await this.loadLedConfig();
+            } catch (err) {
+                this.toast('保存设备失败：' + err.message, 'error');
+            }
+        },
+
+        async deleteLedDevice(device) {
+            if (!device?.id) return;
+            if (!confirm(`确定删除设备「${device.name}」吗？关联的灯带和映射也会被删除。`)) return;
+            try {
+                await api.del(`/api/settings/led/devices/${device.id}`);
+                await this.loadLedConfig();
+                this.toast('设备已删除', 'success');
+            } catch (err) {
+                this.toast('删除设备失败：' + err.message, 'error');
+            }
+        },
+
+        async testLedDevice(deviceId) {
+            this.ledTestLoading = { ...this.ledTestLoading, [deviceId]: true };
+            this.ledTestResults = { ...this.ledTestResults, [deviceId]: null };
+            try {
+                const result = await api.post(`/api/settings/led/devices/${deviceId}/test`);
+                this.ledTestResults = { ...this.ledTestResults, [deviceId]: result };
+            } catch (err) {
+                this.ledTestResults = { ...this.ledTestResults, [deviceId]: { connected: false, error: err.message } };
+            } finally {
+                this.ledTestLoading = { ...this.ledTestLoading, [deviceId]: false };
+            }
+        },
+
+        createLedStrip() {
+            this.ledStripForm = { device_id: '', name: '', gpio_num: '', led_count: 0 };
+        },
+
+        editLedStrip(strip) {
+            this.ledStripForm = { ...strip };
+        },
+
+        cancelLedStripForm() {
+            this.ledStripForm = null;
+        },
+
+        async saveLedStrip() {
+            const form = this.ledStripForm;
+            if (!form) return;
+            if (!form.device_id) {
+                this.toast('请选择设备', 'warning');
+                return;
+            }
+            if (!String(form.name || '').trim()) {
+                this.toast('请填写灯带名称', 'warning');
+                return;
+            }
+            try {
+                const payload = {
+                    device_id: Number(form.device_id),
+                    name: form.name.trim(),
+                    gpio_num: Number(form.gpio_num),
+                    led_count: Number(form.led_count || 0)
+                };
+                if (form.id) {
+                    await api.put(`/api/settings/led/strips/${form.id}`, payload);
+                    this.toast('灯带已更新', 'success');
+                } else {
+                    await api.post('/api/settings/led/strips', payload);
+                    this.toast('灯带已添加', 'success');
+                }
+                this.ledStripForm = null;
+                await this.loadLedConfig();
+            } catch (err) {
+                this.toast('保存灯带失败：' + err.message, 'error');
+            }
+        },
+
+        async deleteLedStrip(strip) {
+            if (!strip?.id) return;
+            if (!confirm(`确定删除灯带「${strip.name}」吗？关联的映射也会被删除。`)) return;
+            try {
+                await api.del(`/api/settings/led/strips/${strip.id}`);
+                await this.loadLedConfig();
+                this.toast('灯带已删除', 'success');
+            } catch (err) {
+                this.toast('删除灯带失败：' + err.message, 'error');
+            }
+        },
+
+        addLedMapping() {
+            const stripId = this.ledStrips.length === 1 ? Number(this.ledStrips[0].id) : '';
+            this.ledMappings.push({
+                box_id: '',
+                strip_id: stripId,
+                led_index: stripId ? this.nextLedIndex(stripId) : 0,
+                color: '#00ff00'
+            });
+        },
+
+        removeLedMapping(index) {
+            this.ledMappings.splice(index, 1);
+        },
+
+        async saveLedMappings() {
+            const mappings = this.ledMappings
+                .filter((m) => m.box_id && m.strip_id)
+                .map((m) => ({
+                    box_id: Number(m.box_id),
+                    strip_id: Number(m.strip_id),
+                    led_index: Number(m.led_index || 0),
+                    color: this.normalizeLedColor(m.color)
+                }));
+            try {
+                const result = await api.put('/api/settings/led/mappings', { mappings });
+                this.ledMappings = this.normalizeLedMappings(result.mappings || []);
+                this.toast('映射已保存', 'success');
+            } catch (err) {
+                this.toast('保存映射失败：' + err.message, 'error');
+            }
+        },
+
+        async locateBox(boxId) {
+            try {
+                await api.post(`/api/led/locate/box/${boxId}`);
+                this.toast('LED 定位指令已发送', 'success');
+            } catch (err) {
+                this.toast('LED 定位失败：' + err.message, 'error');
+            }
+        },
+
+        async locateComponent(compId) {
+            try {
+                await api.post(`/api/led/locate/component/${compId}`);
+                this.toast('LED 定位指令已发送', 'success');
+            } catch (err) {
+                this.toast('LED 定位失败：' + err.message, 'error');
+            }
+        },
+
+        async locateBomItems() {
+            if (!this.bomData?.items?.length) {
+                this.toast('请先导入 BOM', 'warning');
+                return;
+            }
+            const boxIds = (this.bomData.items || [])
+                .filter((item) => item.matched?.box_id)
+                .map((item) => item.matched.box_id);
+            const uniqueIds = [...new Set(boxIds)];
+            if (!uniqueIds.length) {
+                this.toast('BOM 中没有匹配到收纳盒', 'warning');
+                return;
+            }
+            try {
+                const result = await api.post('/api/led/locate/bom', { box_ids: uniqueIds });
+                this.toast(`已定位 ${result.led_count || 0} 个 LED`, 'success');
+                if (result.errors?.length) {
+                    this.toast(result.errors.join('; '), 'warning');
+                }
+            } catch (err) {
+                this.toast('BOM 定位失败：' + err.message, 'error');
+            }
+        },
+
+        async clearLed() {
+            try {
+                await api.post('/api/led/clear');
+                this.toast('LED 已全部清除', 'success');
+            } catch (err) {
+                this.toast('清除 LED 失败：' + err.message, 'error');
             }
         }
     };
