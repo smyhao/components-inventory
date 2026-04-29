@@ -1,30 +1,10 @@
-const API_BASE = '';
+// 本文件负责暴露兼容旧页面代码的 API 全局入口，属于 static 前端服务适配层；具体 HTTP 实现在 modules/http.js。
+const InventoryHttp = window.InventoryModules?.http;
+const API_BASE = InventoryHttp?.API_BASE || '';
 
 async function request(method, path, data = null) {
-    const options = {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-    };
-    if (data && method !== 'GET') {
-        options.body = JSON.stringify(data);
-    }
-    const url = API_BASE + path + (method === 'GET' && data ? '?' + new URLSearchParams(data) : '');
-    try {
-        const res = await fetch(url, options);
-        const json = await res.json();
-        if (json.code !== 0) {
-            if (typeof logAction === 'function') {
-                logAction('ERROR', `API ${method} ${path} 失败: ${json.message}`);
-            }
-            throw new Error(json.message);
-        }
-        return json.data;
-    } catch (err) {
-        if (typeof logAction === 'function') {
-            logAction('ERROR', `网络请求 ${method} ${path} 异常: ${err.message}`);
-        }
-        throw err;
-    }
+    if (!InventoryHttp) throw new Error('前端 HTTP 模块未加载');
+    return InventoryHttp.request(method, path, data);
 }
 
 const api = {
@@ -35,64 +15,22 @@ const api = {
 };
 
 async function uploadFile(path, file, extraFields = {}) {
-    const formData = new FormData();
-    formData.append('file', file);
-    Object.entries(extraFields).forEach(([k, v]) => formData.append(k, v));
-    try {
-        const res = await fetch(API_BASE + path, { method: 'POST', body: formData });
-        const json = await res.json();
-        if (json.code !== 0) {
-            if (typeof logAction === 'function') {
-                logAction('ERROR', `上传 ${path} 失败: ${json.message}`);
-            }
-            throw new Error(json.message);
-        }
-        return json.data;
-    } catch (err) {
-        if (typeof logAction === 'function') {
-            logAction('ERROR', `上传 ${path} 异常: ${err.message}`);
-        }
-        throw err;
-    }
+    if (!InventoryHttp) throw new Error('前端 HTTP 模块未加载');
+    return InventoryHttp.uploadFile(path, file, extraFields);
 }
 
 async function downloadFile(path, data = null, filename = 'download') {
-    const url = data ? path + '?' + new URLSearchParams(data) : path;
-    try {
-        const res = await fetch(API_BASE + url);
-        if (!res.ok) throw new Error('下载失败');
-        const blob = await res.blob();
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(a.href);
-    } catch (err) {
-        if (typeof logAction === 'function') {
-            logAction('ERROR', `下载 ${path} 异常: ${err.message}`);
-        }
-        throw err;
-    }
+    if (!InventoryHttp) throw new Error('前端 HTTP 模块未加载');
+    return InventoryHttp.downloadFile(path, data, filename);
 }
 
 async function downloadPostFile(path, data = {}, filename = 'download') {
-    try {
-        const res = await fetch(API_BASE + path, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-        if (!res.ok) throw new Error('下载失败');
-        const blob = await res.blob();
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(a.href);
-    } catch (err) {
-        if (typeof logAction === 'function') {
-            logAction('ERROR', `下载 ${path} 异常: ${err.message}`);
-        }
-        throw err;
-    }
+    if (!InventoryHttp) throw new Error('前端 HTTP 模块未加载');
+    return InventoryHttp.downloadPostFile(path, data, filename);
 }
+
+// 兼容独立页面和旧脚本通过 window 读取 API 能力的用法。
+window.api = api;
+window.uploadFile = uploadFile;
+window.downloadFile = downloadFile;
+window.downloadPostFile = downloadPostFile;

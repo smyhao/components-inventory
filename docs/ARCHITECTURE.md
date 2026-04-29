@@ -66,6 +66,9 @@ components-inventory/
 ├── models.py               # InventoryRepository 外观（~170 行）
 ├── inventory_cli.py        # CLI 工具入口
 ├── requirements.txt        # Python 依赖
+├── prompt/                 # 前端重构等协作任务 Prompt
+│   ├── 00-frontend-refactor-shared-rules.md
+│   └── 01-...09-frontend-*.md
 │
 ├── routes/                 # 路由层 — 12 个 Flask 蓝图
 │   ├── __init__.py         #   register_blueprints()
@@ -110,16 +113,26 @@ components-inventory/
 │
 ├── static/                 # 前端静态文件
 │   ├── index.html          #   主界面
-│   ├── box.html            #   收纳盒详情页
+│   ├── box.html            #   收纳盒独立查看页
 │   ├── css/style.css       #   全局样式
 │   └── js/
-│       ├── api.js          #   API 通信层
+│       ├── api.js          #   API 兼容入口（保留 api/upload/download 全局名称）
 │       ├── app.js          #   主应用逻辑（最大的前端文件）
 │       ├── bg-fx.js        #   背景动效
 │       ├── logger.js       #   前端日志收集
 │       ├── map.js          #   地图可视化
 │       ├── nfc.js          #   NFC 功能
-│       └── scanner.js      #   QR 扫描
+│       ├── scanner.js      #   QR 扫描
+│       ├── modules/
+│       │   ├── core.js     #   前端模块命名空间与特性合并工具
+│       │   └── http.js     #   HTTP 请求、响应解析、上传下载基础服务
+│       └── features/
+│           ├── components.js # 元器件列表、筛选、表单、详情、库存和导入导出交互
+│           ├── storage.js  #   收纳盒/柜子列表、表单、详情网格交互
+│           ├── map-workbench.js # 地图加载、拖拽缩放、背景、布局保存和 BOM 高亮联动
+│           ├── bom.js      #   BOM 导入、匹配、批量选择、领料、导出和地图跳转桥接
+│           ├── automation.js # Token、LED、NFC 与扫码自动化交互
+│           └── box-page.js #   /box/<id> 独立查看页渲染
 │
 ├── inventory_client/       # CLI HTTP 客户端库
 │   ├── __init__.py
@@ -155,6 +168,14 @@ components-inventory/
 ---
 
 ## 4. 核心模块详解
+
+### 4.0 前端边界
+
+主界面仍由 `static/index.html` 通过 `x-data="app()"` 启动，HTML 只保留页面区块、移动端底部导航、模态框和脚本加载顺序等结构说明，不承载业务规则。
+
+前端 JS 以 `static/js/modules/core.js` 提供 `window.InventoryModules` 命名空间、`mergeFeature` 和 `createToast` 等轻量组合工具；`static/js/modules/http.js` 负责 HTTP 请求与上传下载基础能力；领域交互逐步放入 `static/js/features/`，再由 `static/js/app.js` 保持兼容入口并按需合并。`automation.js` 承载隐藏设置入口、Token 管理、LED 定位配置与动作、NFC 读写和扫码录入，扫码识别后通过注入入口触发元器件详情或表单，避免直接耦合元器件领域内部实现。
+
+样式当前仍集中在 `static/css/style.css`，按“基础变量与 reset、应用外壳、通用组件、领域视图、模态框/反馈、工具类、响应式”顺序维护分区。若后续拆成 `base.css`、`components.css`、`features.css`、`responsive.css`，必须同步更新 `index.html` 与 `box.html` 的加载顺序。
 
 ### 4.1 app.py — 应用入口
 
@@ -587,6 +608,10 @@ class TestNewFeature:
 - 改动必须保持现有分层结构完整，不绕过 `InventoryRepository` 外观层，不把 HTTP、业务逻辑和 SQL 访问混杂在同一层。
 - 代码应保持可读、可维护，优先复用已有工具函数、响应封装、仓储基类和测试 fixtures。
 - 每次更改完成后都要同步检查并更新本 `docs/ARCHITECTURE.md`；若架构内容无需变化，应在提交说明中明确记录已检查。
+
+### 前端重构 Prompt
+
+前端重构协作 Prompt 放在项目根目录 `prompt/` 下。该目录用于拆分可并行执行的前端重构任务，包含共享规则、领域模块抽取任务和最终集成验收任务。执行这些 Prompt 时仍需遵守 `AGENTS.md` 的分层、中文注释、测试和文档同步要求。
 
 ### 添加新的 API 端点
 

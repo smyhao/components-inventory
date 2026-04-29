@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 本文件负责收纳盒独立查看页结构，数据加载和安全渲染由 static/js/features/box-page.js 接管。 -->
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -320,56 +321,9 @@
         </div>
     </div>
 
+    <script src="/static/js/modules/core.js"></script>
+    <script src="/static/js/modules/http.js"></script>
     <script src="/static/js/api.js"></script>
-    <script>
-        (async function() {
-            const pathMatch = window.location.pathname.match(/\/box\/(\d+)/);
-            const boxId = pathMatch ? pathMatch[1] : null;
-            if (!boxId) {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('error').style.display = 'block';
-                document.getElementById('error-msg').textContent = '无效的收纳盒 ID';
-                return;
-            }
-            try {
-                const [box, grid] = await Promise.all([
-                    api.get(`/api/boxes/${boxId}`),
-                    api.get(`/api/boxes/${boxId}/grid`)
-                ]);
-                document.getElementById('box-name').textContent = box.name;
-                document.getElementById('box-meta').textContent = `${box.rows}\u00d7${box.cols} \u00b7 \u5360\u7528 ${box.occupied_count || 0}/${box.rows * box.cols}`;
-                document.documentElement.style.setProperty('--box-accent', box.color || '#84b59b');
-
-                const gridEl = document.getElementById('grid');
-                gridEl.style.display = 'grid';
-                gridEl.style.gridTemplateColumns = `repeat(${grid.cols}, minmax(0, 1fr))`;
-
-                for (let r = 0; r < grid.rows; r++) {
-                    for (let c = 0; c < grid.cols; c++) {
-                        const cell = grid.cells[r][c];
-                        const el = document.createElement('div');
-                        el.className = 'box-cell ' + (cell.component ? (cell.component.quantity <= cell.component.min_stock ? 'box-cell-low' : 'box-cell-ok') : 'box-cell-empty');
-                        if (cell.component) {
-                            el.innerHTML = `<div class="box-cell-name">${escapeHtml(cell.component.name)}</div><div class="box-cell-qty">${cell.component.quantity}</div>`;
-                        } else {
-                            el.textContent = cell.label;
-                        }
-                        gridEl.appendChild(el);
-                    }
-                }
-                document.getElementById('loading').style.display = 'none';
-            } catch (e) {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('error').style.display = 'block';
-                document.getElementById('error-msg').textContent = e.message;
-            }
-        })();
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    </script>
+    <script src="/static/js/features/box-page.js"></script>
 </body>
 </html>

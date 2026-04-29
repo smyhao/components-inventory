@@ -45,3 +45,6 @@ htmlcov/
 
 # Development notes
 md/
+
+#prompt
+prompt/

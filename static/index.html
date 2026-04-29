@@ -13,6 +13,7 @@
             onerror="window.__scannerLibLoadErrorMessage='本地扫码库加载失败，请确认 /static/vendor/html5-qrcode.min.js 存在。';"></script>
 </head>
 <body x-data="app()" x-init="initApp()" @keydown.escape.window="closeAllModals()">
+    <!-- 应用外壳：侧边导航、顶部栏和主内容区域只承载页面结构，状态由 app.js 注入。 -->
     <div class="app-shell">
         <aside class="side-nav">
             <div class="brand-block">
@@ -84,6 +85,7 @@
             </header>
 
             <main class="content-shell">
+                <!-- 页面区块：仪表盘概览。 -->
                 <section x-show="page === 'dashboard'" x-cloak class="dashboard-shell">
                     <div class="dashboard-hero">
                         <div>
@@ -143,6 +145,7 @@
                     </div>
                 </section>
 
+                <!-- 页面区块：元器件列表、筛选和分页。 -->
                 <section x-show="page === 'components'" x-cloak class="component-shell">
                     <div class="page-toolbar">
                         <div>
@@ -212,6 +215,7 @@
                     </div>
                 </section>
 
+                <!-- 页面区块：收纳盒与柜子列表。 -->
                 <section x-show="page === 'boxes'" x-cloak class="boxes-shell">
                     <div class="page-toolbar">
                         <div>
@@ -242,6 +246,7 @@
                     </div>
                 </section>
 
+                <!-- 页面区块：收纳盒详情网格。 -->
                 <section x-show="page === 'box-detail'" x-cloak class="box-detail-shell">
                     <div class="page-toolbar">
                         <div>
@@ -270,6 +275,7 @@
                     </div>
                 </section>
 
+                <!-- 页面区块：库存地图工作台。 -->
                 <section x-show="page === 'map'" x-cloak class="map-shell">
                     <div class="map-head">
                         <div>
@@ -355,6 +361,7 @@
                     </div>
                 </section>
 
+                <!-- 页面区块：BOM 导入、匹配和领料。 -->
                 <section x-show="page === 'bom'" x-cloak class="bom-shell">
                     <div class="page-toolbar">
                         <div>
@@ -426,6 +433,7 @@
                     </div>
                 </section>
 
+                <!-- 页面区块：NFC 标签绑定与写入。 -->
                 <section x-show="page === 'nfc'" x-cloak class="nfc-shell">
                     <div class="page-toolbar">
                         <div>
@@ -455,6 +463,7 @@
         </div>
     </div>
 
+    <!-- 移动端底部导航：保持与侧边导航相同的 page 状态语义。 -->
     <nav class="bottom-nav">
         <button :class="{ active: page === 'dashboard' }" @click="navigate('dashboard')">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>
@@ -478,8 +487,10 @@
         </button>
     </nav>
 
+    <!-- 隐藏文件入口：导入动作由按钮触发，这里只保留浏览器文件选择能力。 -->
     <input type="file" accept=".csv,.xlsx" class="hidden" x-ref="importInput" @change="handleImportFile($event.target.files[0]); $event.target.value=''">
 
+    <!-- 模态框区域：表单、详情、库存、设置和扫码弹窗集中放置，避免散落在页面区块中。 -->
     <div x-show="modal === 'component-form'" x-cloak class="modal-overlay" @click.self="closeModal()">
         <div class="modal-panel modal-sheet-form" x-ref="componentFormPanel">
             <div class="modal-header">
@@ -935,8 +946,16 @@
 
     <div id="toast-container"></div>
 
+    <!-- 脚本加载顺序：基础命名空间与 HTTP 服务先加载，领域 feature 再加载，最后启动 app()。 -->
+    <script src="/static/js/modules/core.js"></script>
+    <script src="/static/js/modules/http.js"></script>
     <script src="/static/js/api.js"></script>
     <script src="/static/js/logger.js"></script>
+    <script src="/static/js/features/components.js"></script>
+    <script src="/static/js/features/storage.js"></script>
+    <script src="/static/js/features/map-workbench.js"></script>
+    <script src="/static/js/features/bom.js"></script>
+    <script src="/static/js/features/automation.js"></script>
     <script src="/static/js/map.js"></script>
     <script src="/static/js/nfc.js"></script>
     <script src="/static/js/scanner.js"></script>
