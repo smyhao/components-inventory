@@ -11,6 +11,16 @@
     <script>window.__scannerLibLoadErrorMessage = '';</script>
     <script src="/static/vendor/html5-qrcode.min.js"
             onerror="window.__scannerLibLoadErrorMessage='本地扫码库加载失败，请确认 /static/vendor/html5-qrcode.min.js 存在。';"></script>
+    <!-- 3D 地图视图：Three.js importmap 和专用样式。必须在所有 type="module" script 之前。 -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "/static/vendor/three.module.min.js",
+            "three/addons/": "/static/vendor/"
+        }
+    }
+    </script>
+    <link rel="stylesheet" href="/static/css/map-3d.css">
 </head>
 <body x-data="app()" x-init="initApp()" @keydown.escape.window="closeAllModals()">
     <!-- 应用外壳：侧边导航、顶部栏和主内容区域只承载页面结构，状态由 app.js 注入。 -->
@@ -283,81 +293,99 @@
                             <p><strong>拖动</strong>盒子调整位置，<strong>滚轮</strong>或按钮缩放视图。</p>
                         </div>
                         <div class="toolbar-actions">
+                            <div class="map-view-toggle">
+                                <button :class="{ active: mapViewMode === '2d' }" @click="toggleMapView('2d')">2D</button>
+                                <button :class="{ active: mapViewMode === '3d' }" @click="toggleMapView('3d')">3D</button>
+                            </div>
+                            <select class="map-preset-select" x-show="mapViewMode === '3d'" x-model="presetLayout" @change="applyPresetLayout($event.target.value)">
+                                <option value="none">预设布局</option>
+                                <option value="wall">单面墙</option>
+                                <option value="l-shape">L 型</option>
+                                <option value="workbench">工作台</option>
+                                <option value="face-to-face">面对面</option>
+                            </select>
+                            <div class="map-btn-divider" x-show="mapViewMode === '2d'"></div>
                             <div class="map-btn-group">
                                 <button class="btn btn-secondary" @click="openCabinetForm()">新增柜子</button>
-                                <select class="btn btn-secondary map-bg-select" x-model="mapBackground" @change="localStorage.setItem('inventory-map-bg', mapBackground)">
+                                <select class="btn btn-secondary map-bg-select" x-show="mapViewMode === '2d'" x-model="mapBackground" @change="localStorage.setItem('inventory-map-bg', mapBackground)">
                                     <option value="grid">网格背景</option>
                                     <option value="clean">干净背景</option>
                                     <option value="dot">点阵背景</option>
                                     <option value="dark">深色网格</option>
                                 </select>
                                 <input type="file" accept="image/*" x-ref="mapBgInput" @change="uploadMapBackground($event)" style="display:none">
-                                <button class="btn btn-secondary" @click="$refs.mapBgInput.click()">上传背景图</button>
-                                <button class="btn btn-secondary" x-show="mapBackgroundUrl" @click="clearMapBackground()">清除背景</button>
+                                <button class="btn btn-secondary" x-show="mapViewMode === '2d'" @click="$refs.mapBgInput.click()">上传背景图</button>
+                                <button class="btn btn-secondary" x-show="mapViewMode === '2d' && mapBackgroundUrl" @click="clearMapBackground()">清除背景</button>
                             </div>
                             <div class="map-btn-divider"></div>
                             <div class="map-btn-group">
-                                <button class="btn btn-secondary" @click="zoomMap(-0.1)">缩小</button>
-                                <button class="btn btn-secondary" @click="zoomMap(0.1)">放大</button>
-                                <button class="btn btn-secondary" @click="resetMapView()">重置</button>
-                                <button class="btn btn-primary" :disabled="!mapDirty" @click="saveMapLayout()">保存布局</button>
+                                <button class="btn btn-secondary" x-show="mapViewMode === '2d'" @click="zoomMap(-0.1)">缩小</button>
+                                <button class="btn btn-secondary" x-show="mapViewMode === '2d'" @click="zoomMap(0.1)">放大</button>
+                                <button class="btn btn-secondary" x-show="mapViewMode === '2d'" @click="resetMapView()">重置</button>
+                                <button class="btn btn-secondary map-lock-btn" :class="{ active: mapLayoutLocked }" @click="toggleMapLayoutLock()" :title="mapLayoutLocked ? '解锁后可移动柜子和收纳盒' : '锁定后防止误触移动布局'" x-text="mapLayoutLocked ? '解锁位置' : '锁定位置'"></button>
+                                <button class="btn btn-primary" x-show="mapViewMode === '2d'" :disabled="!mapDirty" @click="saveMapLayout()">保存布局</button>
                             </div>
                         </div>
                     </div>
                     <div class="map-workbench">
-                        <div class="map-legend">
-                            <span class="legend-item"><i class="legend-swatch" style="background:#8b9aae"></i>柜子</span>
-                            <span class="legend-item"><i class="legend-swatch" style="background:#84b59b"></i>收纳盒颜色</span>
-                            <span class="legend-item"><i class="legend-swatch" style="background:#1f7a6c"></i>BOM 高亮</span>
-                            <span class="legend-item">缩放 <b x-text="Math.round(mapState.scale * 100) + '%'"></b></span>
-                        </div>
-                        <div id="map-container" class="map-container" :class="{[`bg-${mapBackground}`]: !mapBackgroundUrl, 'has-custom-bg': mapBackgroundUrl}" :style="mapBackgroundUrl ? `background: url('${mapBackgroundUrl}') center/cover no-repeat;` : ''" @mousedown="panMapStart($event)" @touchstart="panMapStart($event)" @wheel.prevent="zoomMap($event.deltaY > 0 ? -0.08 : 0.08)">
-                            <div id="map-layer" class="map-layer" :style="mapViewportStyle()">
-                                <template x-for="cabinet in mapCabinets" :key="'cabinet-' + cabinet.id">
-                                    <div class="map-cabinet" :class="{ open: isCabinetExpanded(cabinet), dragging: draggingCabinet === cabinet }" :style="getMapCabinetStyle(cabinet)" @mousedown="startDragCabinet(cabinet, $event)" @touchstart="startDragCabinet(cabinet, $event)">
-                                        <div class="cabinet-body">
-                                            <div class="cabinet-top">
-                                                <strong x-text="cabinet.name"></strong>
-                                                <div class="cabinet-top-actions">
-                                                    <span class="cabinet-badge"><span x-text="cabinet.box_count || 0"></span> 盒</span>
+                        <!-- 2D 地图（原有内容整体包裹，控制显隐）。 -->
+                        <div class="map-2d-stage" x-show="mapViewMode === '2d'">
+                            <div class="map-legend">
+                                <span class="legend-item"><i class="legend-swatch" style="background:#8b9aae"></i>柜子</span>
+                                <span class="legend-item"><i class="legend-swatch" style="background:#84b59b"></i>收纳盒颜色</span>
+                                <span class="legend-item"><i class="legend-swatch" style="background:#1f7a6c"></i>BOM 高亮</span>
+                                <span class="legend-item">缩放 <b x-text="Math.round(mapState.scale * 100) + '%'"></b></span>
+                            </div>
+                            <div id="map-container" class="map-container" :class="{[`bg-${mapBackground}`]: !mapBackgroundUrl, 'has-custom-bg': mapBackgroundUrl}" :style="mapBackgroundUrl ? `background: url('${mapBackgroundUrl}') center/cover no-repeat;` : ''" @mousedown="panMapStart($event)" @touchstart="panMapStart($event)" @wheel.prevent="zoomMap($event.deltaY > 0 ? -0.08 : 0.08)">
+                                <div id="map-layer" class="map-layer" :style="mapViewportStyle()">
+                                    <template x-for="cabinet in mapCabinets" :key="'cabinet-' + cabinet.id">
+                                        <div class="map-cabinet" :class="{ open: isCabinetExpanded(cabinet), dragging: draggingCabinet === cabinet }" :style="getMapCabinetStyle(cabinet)" @mousedown="startDragCabinet(cabinet, $event)" @touchstart="startDragCabinet(cabinet, $event)">
+                                            <div class="cabinet-body">
+                                                <div class="cabinet-top">
+                                                    <strong x-text="cabinet.name"></strong>
+                                                    <div class="cabinet-top-actions">
+                                                        <span class="cabinet-badge"><span x-text="cabinet.box_count || 0"></span> 盒</span>
+                                                    </div>
                                                 </div>
+                                                <button class="cabinet-edit" @click.stop="openCabinetForm(cabinet)">编辑</button>
+                                                <button class="cabinet-delete" @click.stop="deleteCabinet(cabinet)">删除</button>
                                             </div>
-                                            <button class="cabinet-edit" @click.stop="openCabinetForm(cabinet)">编辑</button>
-                                            <button class="cabinet-delete" @click.stop="deleteCabinet(cabinet)">删除</button>
+                                            <button class="cabinet-handle" @click.stop="toggleCabinet(cabinet)" :aria-label="isCabinetExpanded(cabinet) ? '收起' : '展开'"></button>
+                                            <div class="cabinet-drawer">
+                                                <template x-for="box in cabinet.boxes" :key="'cabinet-box-' + box.id">
+                                                    <div class="cabinet-box-model" :class="{ highlight: mapHighlights.includes(box.id) }" :style="getMapBoxStyle({ ...box, position_x: 0, position_y: 0, mapWidth: 78, mapHeight: 58 })">
+                                                        <span class="cabinet-box-lid"></span>
+                                                        <span class="cabinet-box-name" x-text="box.name"></span>
+                                                        <button class="cabinet-box-open" @click.stop="viewBoxDetail(box.id)" aria-label="查看收纳盒"></button>
+                                                        <button class="map-box-led-btn mini" x-show="ledConfig.enabled" @click.stop="locateBox(box.id)" title="LED 定位">LED</button>
+                                                        <template x-for="label in box.pickLabels" :key="label.num">
+                                                            <i class="pick-label mini" x-text="label.num"></i>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                                <div class="cabinet-empty" x-show="(cabinet.boxes || []).length === 0">暂无收纳盒</div>
+                                            </div>
                                         </div>
-                                        <button class="cabinet-handle" @click.stop="toggleCabinet(cabinet)" :aria-label="isCabinetExpanded(cabinet) ? '收起' : '展开'"></button>
-                                        <div class="cabinet-drawer">
-                                            <template x-for="box in cabinet.boxes" :key="'cabinet-box-' + box.id">
-                                                <div class="cabinet-box-model" :class="{ highlight: mapHighlights.includes(box.id) }" :style="getMapBoxStyle({ ...box, position_x: 0, position_y: 0, mapWidth: 78, mapHeight: 58 })">
-                                                    <span class="cabinet-box-lid"></span>
-                                                    <span class="cabinet-box-name" x-text="box.name"></span>
-                                                    <button class="cabinet-box-open" @click.stop="viewBoxDetail(box.id)" aria-label="查看收纳盒"></button>
-                                                    <button class="map-box-led-btn mini" x-show="ledConfig.enabled" @click.stop="locateBox(box.id)" title="LED 定位">LED</button>
-                                                    <template x-for="label in box.pickLabels" :key="label.num">
-                                                        <i class="pick-label mini" x-text="label.num"></i>
-                                                    </template>
-                                                </div>
+                                    </template>
+                                    <template x-for="box in mapBoxes" :key="box.id">
+                                        <div class="map-box" :class="{ highlight: mapHighlights.includes(box.id), dragging: draggingBox === box }" :style="getMapBoxStyle(box)" @mousedown="startDragBox(box, $event)" @touchstart="startDragBox(box, $event)">
+                                            <div class="map-box-inner" :style="`grid-template-columns: repeat(${box.cols}, 1fr);`">
+                                                <template x-for="cell in box.cells" :key="cell.idx">
+                                                    <span class="map-box-cell" :class="{ occupied: cell.occupied }"></span>
+                                                </template>
+                                            </div>
+                                            <div class="map-box-label" x-text="box.name"></div>
+                                            <template x-for="label in box.pickLabels" :key="label.num">
+                                                <div class="pick-label" x-text="label.num"></div>
                                             </template>
-                                            <div class="cabinet-empty" x-show="(cabinet.boxes || []).length === 0">暂无收纳盒</div>
+                                            <button class="map-box-led-btn" x-show="ledConfig.enabled" @click.stop="locateBox(box.id)" title="LED 定位">LED</button>
                                         </div>
-                                    </div>
-                                </template>
-                                <template x-for="box in mapBoxes" :key="box.id">
-                                    <div class="map-box" :class="{ highlight: mapHighlights.includes(box.id), dragging: draggingBox === box }" :style="getMapBoxStyle(box)" @mousedown="startDragBox(box, $event)" @touchstart="startDragBox(box, $event)">
-                                        <div class="map-box-inner" :style="`grid-template-columns: repeat(${box.cols}, 1fr);`">
-                                            <template x-for="cell in box.cells" :key="cell.idx">
-                                                <span class="map-box-cell" :class="{ occupied: cell.occupied }"></span>
-                                            </template>
-                                        </div>
-                                        <div class="map-box-label" x-text="box.name"></div>
-                                        <template x-for="label in box.pickLabels" :key="label.num">
-                                            <div class="pick-label" x-text="label.num"></div>
-                                        </template>
-                                        <button class="map-box-led-btn" x-show="ledConfig.enabled" @click.stop="locateBox(box.id)" title="LED 定位">LED</button>
-                                    </div>
-                                </template>
+                                    </template>
+                                </div>
                             </div>
                         </div>
+                        <!-- 3D 地图容器：Three.js canvas 和 CSS2D 标签层。 -->
+                        <div id="map-3d-container" class="map-3d-container" x-show="mapViewMode === '3d'" x-cloak></div>
                     </div>
                 </section>
 
@@ -956,6 +984,24 @@
     <script src="/static/js/features/map-workbench.js"></script>
     <script src="/static/js/features/bom.js"></script>
     <script src="/static/js/features/automation.js"></script>
+    <!-- 3D 地图引擎：Three.js 全局挂载和 3D 模块。 -->
+    <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/OrbitControls.js';
+    import { CSS2DObject, CSS2DRenderer } from 'three/addons/CSS2DRenderer.js';
+    window.THREE = THREE;
+    window.OrbitControlsModule = OrbitControls;
+    window.CSS2DObjectModule = CSS2DObject;
+    window.CSS2DRendererModule = CSS2DRenderer;
+    </script>
+    <script src="/static/js/3d/box-model.js"></script>
+    <script src="/static/js/3d/cabinet-model.js"></script>
+    <script src="/static/js/3d/labels.js"></script>
+    <script src="/static/js/3d/highlights.js"></script>
+    <script src="/static/js/3d/layouts.js"></script>
+    <script src="/static/js/3d/scene-manager.js"></script>
+    <script src="/static/js/3d/interaction.js"></script>
+    <script src="/static/js/features/map-3d.js"></script>
     <script src="/static/js/map.js"></script>
     <script src="/static/js/nfc.js"></script>
     <script src="/static/js/scanner.js"></script>

@@ -13,7 +13,10 @@
 ```
 ┌──────────────────────────────────────────────────────┐
 │  前端 (static/)                                       │
-│  index.html / box.html / js / css                     │
+│  index.html / box.html / js / css / vendor            │
+│  2D 地图层 (features/map-workbench.js)                 │
+│  3D 引擎层 (js/3d/)                                   │
+│  scene-manager / models / interaction / labels / ...  │
 └───────────────────────┬──────────────────────────────┘
                         │ HTTP / REST API
 ┌───────────────────────▼──────────────────────────────┐
@@ -51,6 +54,8 @@
 | services/ | 文件解析、算法匹配、Excel 生成 | 纯函数，不直接依赖 repo |
 | models.py | InventoryRepository 外观 | 薄委托，对外接口不变 |
 | repositories/ | SQL 查询、数据读写 | 不包含 HTTP 逻辑 |
+
+3D 地图视图位于前端静态层内，使用 Three.js 构建独立引擎层。`static/js/features/map-3d.js` 只负责 Alpine 状态桥接、2D/3D 切换和 API 调用，`static/js/3d/` 内的 scene/model/interaction/label/highlight/layout 模块负责 Three.js 场景、模型和动画。
 
 ---
 
@@ -112,12 +117,14 @@ components-inventory/
 ├── models.py               # InventoryRepository — 薄外观，委托给子仓储
 │
 ├── static/                 # 前端静态文件
-│   ├── index.html          #   主界面
+│   ├── index.html          #   主界面（含 2D/3D 切换、3D 容器和 importmap）
 │   ├── box.html            #   收纳盒独立查看页
-│   ├── css/style.css       #   全局样式
-│   └── js/
+│   ├── css/
+│   │   ├── style.css       #   全局样式
+│   │   └── map-3d.css      #   3D 地图专用样式
+│   ├── js/
 │       ├── api.js          #   API 兼容入口（保留 api/upload/download 全局名称）
-│       ├── app.js          #   主应用逻辑（最大的前端文件）
+│       ├── app.js          #   主应用入口（合并各 feature，包括 map3dFeature）
 │       ├── bg-fx.js        #   背景动效
 │       ├── logger.js       #   前端日志收集
 │       ├── map.js          #   地图可视化
@@ -126,13 +133,27 @@ components-inventory/
 │       ├── modules/
 │       │   ├── core.js     #   前端模块命名空间与特性合并工具
 │       │   └── http.js     #   HTTP 请求、响应解析、上传下载基础服务
-│       └── features/
+│       ├── features/
 │           ├── components.js # 元器件列表、筛选、表单、详情、库存和导入导出交互
 │           ├── storage.js  #   收纳盒/柜子列表、表单、详情网格交互
 │           ├── map-workbench.js # 地图加载、拖拽缩放、背景、布局保存和 BOM 高亮联动
+│           ├── map-3d.js   #   3D 地图 Alpine 功能模块与跨功能桥接
 │           ├── bom.js      #   BOM 导入、匹配、批量选择、领料、导出和地图跳转桥接
 │           ├── automation.js # Token、LED、NFC 与扫码自动化交互
 │           └── box-page.js #   /box/<id> 独立查看页渲染
+│       └── 3d/             #   3D 引擎层
+│           ├── scene-manager.js # 场景初始化、灯光、地面、渲染循环和资源释放
+│           ├── cabinet-model.js # 参数化柜子、抽屉、把手模型
+│           ├── box-model.js     # 独立收纳盒、格子 InstancedMesh 和颜色更新
+│           ├── interaction.js   # 射线拾取、抽屉动画、格子点击、拖拽保存
+│           ├── labels.js        # CSS2DObject 名称牌、格子标签和 LOD
+│           ├── highlights.js    # BOM 高亮、LED 脉冲、相机飞入、领料序号
+│           └── layouts.js       # 3D 预设布局纯函数
+│   └── vendor/             #   前端第三方库
+│       ├── three.module.min.js # Three.js 核心 ES Module
+│       ├── OrbitControls.js    # 轨道相机控制
+│       ├── CSS2DRenderer.js    # CSS2DObject 标签渲染
+│       └── html5-qrcode.min.js # QR 扫描库
 │
 ├── inventory_client/       # CLI HTTP 客户端库
 │   ├── __init__.py
@@ -174,6 +195,8 @@ components-inventory/
 主界面仍由 `static/index.html` 通过 `x-data="app()"` 启动，HTML 只保留页面区块、移动端底部导航、模态框和脚本加载顺序等结构说明，不承载业务规则。
 
 前端 JS 以 `static/js/modules/core.js` 提供 `window.InventoryModules` 命名空间、`mergeFeature` 和 `createToast` 等轻量组合工具；`static/js/modules/http.js` 负责 HTTP 请求与上传下载基础能力；领域交互逐步放入 `static/js/features/`，再由 `static/js/app.js` 保持兼容入口并按需合并。`automation.js` 承载隐藏设置入口、Token 管理、LED 定位配置与动作、NFC 读写和扫码录入，扫码识别后通过注入入口触发元器件详情或表单，避免直接耦合元器件领域内部实现。
+
+3D 地图视图以 `static/js/3d/` 存放引擎层代码，包括场景管理、参数化模型、射线交互、标签、高亮动画和预设布局。`static/js/features/map-3d.js` 作为 Alpine 功能模块桥接 2D/3D 切换、格子数据懒加载、布局保存和跨功能高亮；Three.js、OrbitControls、CSS2DRenderer 放在 `static/vendor/`，通过 `index.html` 的 importmap 以 ES Module 方式加载。3D 引擎层不直接持有 Alpine 状态，交互层通过 `InteractionManager(sceneManager, alpineContext)` 显式桥接，3D 专用样式集中在 `static/css/map-3d.css`。
 
 样式当前仍集中在 `static/css/style.css`，按“基础变量与 reset、应用外壳、通用组件、领域视图、模态框/反馈、工具类、响应式”顺序维护分区。若后续拆成 `base.css`、`components.css`、`features.css`、`responsive.css`，必须同步更新 `index.html` 与 `box.html` 的加载顺序。
 
@@ -543,7 +566,91 @@ LED 定位由 Flask 作为局域网代理：前端触发定位按钮 → `routes
 
 ---
 
-## 9. 测试
+## 9. 3D 地图视图
+
+### 9.1 概述
+
+3D 地图视图是对 2D 地图的补充展示，使用 Three.js 将柜子和收纳盒以可交互 3D 模型呈现。用户可在地图工具栏切换 2D/3D，两种视图互斥显隐；3D 模式下可点击抽屉把手拉出收纳盒、查看格子与元器件标签、拖拽调整位置并保存到现有 layout API。
+
+### 9.2 技术栈
+
+- Three.js r171：3D 场景、材质、灯光、InstancedMesh
+- OrbitControls：相机轨道控制
+- CSS2DRenderer / CSS2DObject：将 HTML 标签渲染到 3D 空间
+- 原生 Pointer Events：统一鼠标和触摸交互
+
+### 9.3 3D 场景结构
+
+```
+Scene
+├── AmbientLight + DirectionalLight × 2
+├── GridHelper (地面网格)
+├── GroundPlane (ShadowMaterial, 接收阴影)
+└── MapGroup (坐标转换根节点, SCALE_FACTOR=0.01)
+    ├── CabinetGroup (柜子模型)
+    │   ├── 外壳 (顶/底/背/左右侧板)
+    │   ├── DrawerGroup × N (抽屉)
+    │   │   ├── 面板 (box.color)
+    │   │   ├── 把手 (射线拾取目标)
+    │   │   ├── 格子 InstancedMesh
+    │   │   └── CSS2DObject 标签
+    │   └── 层架隔板
+    └── StandaloneBox (独立收纳盒)
+        ├── 托盘
+        ├── 格子 InstancedMesh
+        └── CSS2DObject 标签
+```
+
+### 9.4 参数化尺寸
+
+| 常量 | 值 | 说明 |
+|---|---|---|
+| `SCALE_FACTOR` | `0.01` | 2D 像素坐标 → 3D 世界坐标 |
+| `CABINET_WIDTH` | `1.2` | 柜子 X 轴宽度 |
+| `CABINET_DEPTH` | `0.8` | 柜子 Z 轴深度 |
+| `LAYER_HEIGHT` | `0.35` | 每层抽屉高度 |
+| `WALL_THICKNESS` | `0.03` | 板壁厚度 |
+| `PULL_OUT_DISTANCE` | `0.7` | 抽屉拉出距离 |
+
+### 9.5 交互设计
+
+- **抽屉拉出/推回**：点击把手后设置 `targetZ`，渲染循环以 0.12 系数缓动；同一柜子内抽屉互斥打开。
+- **格子点击**：射线命中 `InstancedMesh` 后读取 `instanceId`，反推 row/col，查找懒加载的格子数据并调用现有 `openComponentDetail()`。
+- **拖拽移动**：射线与 `Y=0` 平面求交，更新柜子或独立盒位置，松手后按 `SCALE_FACTOR` 反转换并调用 layout API 保存。
+- **相机控制**：OrbitControls 限制距离 2-30，极角 0.1 到 `Math.PI / 2 - 0.05`，拖拽对象时临时禁用相机控制。
+
+### 9.6 标签系统
+
+| 标签类型 | CSS 类名 | 显示内容 | 可见性 |
+|---|---|---|---|
+| 柜子标签框 | `.nameplate-3d` | 颜色圆点 + 柜子名称 | 始终可见 |
+| 抽屉标签框 | `.nameplate-3d` | 颜色圆点 + 收纳盒名称 | 始终可见 |
+| 格子标签 | `.compartment-label-3d` | 名称、封装、库存数量 | 距离 LOD 控制 |
+| 领料序号 | `.pick-label-3d` | BOM 领料序号 | BOM 高亮时可见 |
+
+格子标签在相机距离小于 5 时显示完整信息，5-15 时仅显示名称，大于 15 时隐藏；名称牌不受 LOD 影响。
+
+### 9.7 跨功能集成
+
+| 功能 | 3D 实现 |
+|---|---|
+| BOM 高亮 | 抽屉面板或独立盒 emissive 发光，并可自动拉出高亮抽屉 |
+| BOM 领料序号 | CSS2DObject 序号标签挂在抽屉或独立盒上 |
+| LED 定位 | 指定盒子发光正弦脉冲，持续时间来自 LED 配置 |
+| 地图定位/搜索 | 相机平滑飞入目标盒子，柜内盒飞入后自动打开抽屉 |
+| 元器件详情 | 点击格子复用现有元器件详情弹窗 |
+
+### 9.8 性能策略
+
+- 格子使用 `THREE.InstancedMesh` 减少 draw call。
+- 格子数据在抽屉打开时通过 `/api/boxes/<id>/grid` 懒加载。
+- CSS2D 格子标签按距离 LOD 控制显示内容和可见性。
+- 3D 场景按需创建/销毁，切回 2D 时释放控制器、渲染器、几何体、材质和标签 DOM。
+- 渲染器像素比限制为 `Math.min(devicePixelRatio, 2)`，降低高 DPI 设备的 GPU 压力。
+
+---
+
+## 10. 测试
 
 ### 运行测试
 
@@ -597,9 +704,9 @@ class TestNewFeature:
 
 ---
 
-## 10. 开发指南
+## 11. 开发指南
 
-### 10.1 开发流程 Rule
+### 11.1 开发流程 Rule
 
 项目根目录 `AGENTS.md` 是后续开发的强制流程规范。所有开发、重构、修复和文档更新都应遵循以下原则：
 
@@ -656,7 +763,7 @@ NEW_SETTING = os.environ.get("NEW_SETTING", "default_value")
 
 ---
 
-## 11. 部署
+## 12. 部署
 
 ### 环境变量
 
@@ -686,7 +793,7 @@ python inventory_cli.py --server http://localhost:5000 components list
 
 ---
 
-## 12. 依赖
+## 13. 依赖
 
 | 包 | 版本 | 用途 |
 |---|---|---|
@@ -696,3 +803,4 @@ python inventory_cli.py --server http://localhost:5000 components list
 | chardet | >=5.0,<6.0 | 文件编码检测 |
 | qrcode | >=7.4,<8.0 | QR 码生成 |
 | pytest | >=8.0,<9.0 | 测试框架 |
+| Three.js | r171 | 3D 地图渲染、OrbitControls 和 CSS2D 标签 |

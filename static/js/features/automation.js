@@ -511,6 +511,9 @@
                     if (!boxId) return;
                     try {
                         await apiClient.post(`/api/led/locate/box/${boxId}`, {});
+                        if (this.mapViewMode === '3d' && this.scene3D && typeof this.pulseBox3D === 'function') {
+                            this.pulseBox3D(boxId, Number(this.ledConfig?.blink_duration_ms || 5000));
+                        }
                         notify(this, 'LED 定位指令已发送', 'success');
                     } catch (err) {
                         notify(this, 'LED 定位失败：' + err.message, 'error');

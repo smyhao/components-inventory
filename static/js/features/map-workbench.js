@@ -17,6 +17,7 @@
             draggingBox: null,
             draggingCabinet: null,
             dragState: null,
+            mapLayoutLocked: global.localStorage?.getItem('inventory-map-layout-locked') === 'true',
             mapBackground: global.localStorage?.getItem('inventory-map-bg') || 'grid',
             mapBackgroundUrl: ''
         };
@@ -76,6 +77,16 @@
                         .sort((a, b) => Number(a.cabinet_slot || 0) - Number(b.cabinet_slot || 0) || String(a.name).localeCompare(String(b.name)))
                 }));
                 this.updateMapPickLabels();
+                if (this.mapViewMode === '3d' && this.scene3D) {
+                    // 地图数据刷新后重建 3D 对象树，确保 2D/3D 使用同一份后端坐标。
+                    this.scene3D.buildFromMapData(this.mapCabinets || [], this.mapBoxes || []);
+                    if (typeof this.scene3D.setMapScale === 'function') {
+                        this.scene3D.setMapScale(this.mapState.scale);
+                    }
+                    if (typeof this.sync3DHighlights === 'function') {
+                        this.sync3DHighlights();
+                    }
+                }
             } catch (err) {
                 this.toast('加载地图失败：' + err.message, 'error');
             } finally {
@@ -120,10 +131,27 @@
 
         resetMapView() {
             this.mapState = { panX: 48, panY: 48, scale: 1 };
+            if (this.scene3D && typeof this.scene3D.setMapScale === 'function') {
+                this.scene3D.setMapScale(this.mapState.scale);
+            }
+        },
+
+        toggleMapLayoutLock() {
+            this.mapLayoutLocked = !this.mapLayoutLocked;
+            global.localStorage?.setItem('inventory-map-layout-locked', String(this.mapLayoutLocked));
+            if (this.mapLayoutLocked) {
+                this.draggingBox = null;
+                this.draggingCabinet = null;
+                this.dragState = null;
+            }
+            this.toast(this.mapLayoutLocked ? '布局位置已锁定' : '布局位置已解锁', 'info');
         },
 
         zoomMap(delta) {
             this.mapState.scale = Math.max(0.35, Math.min(2.8, Number((this.mapState.scale + delta).toFixed(2))));
+            if (this.scene3D && typeof this.scene3D.setMapScale === 'function') {
+                this.scene3D.setMapScale(this.mapState.scale);
+            }
         },
 
         // 视口交互：平移和双指缩放共享 dragState，触摸移动使用 passive=false 避免页面滚动抢占。
@@ -180,6 +208,7 @@
 
         // 布局拖拽：收纳盒和柜子都只更新前端坐标，保存时再分别调用 layout API。
         startDragBox(box, event) {
+            if (this.mapLayoutLocked) return;
             if (event.touches && event.touches.length > 1) return;
             event.stopPropagation();
             const point = this.eventPoint(event);
@@ -218,6 +247,7 @@
         },
 
         startDragCabinet(cabinet, event) {
+            if (this.mapLayoutLocked) return;
             if (event.touches && event.touches.length > 1) return;
             // 如果点击的是柜子内部的可交互元素（收纳盒、编辑/删除按钮、把手、查看按钮），不启动柜子拖拽
             const target = event.target;
@@ -354,6 +384,10 @@
                 .map((item) => item.matched.box_id);
             this.mapHighlights = [...new Set(ids)];
             this.updateMapPickLabels();
+            if (this.mapViewMode === '3d' && this.scene3D) {
+                if (typeof this.sync3DHighlights === 'function') this.sync3DHighlights();
+                if (typeof this.reveal3DHighlights === 'function') this.reveal3DHighlights();
+            }
             this.page = 'map';
         },
 
@@ -362,6 +396,9 @@
             this.mapHighlights = [boxId];
             this.updateMapPickLabels();
             this.page = 'map';
+            if (this.mapViewMode === '3d' && this.scene3D && typeof this.flyToBox3D === 'function') {
+                this.flyToBox3D(boxId);
+            }
         },
 
         updateMapPickLabels() {
@@ -381,6 +418,9 @@
                     pickLabels: order.includes(box.id) ? [{ num: order.indexOf(box.id) + 1 }] : []
                 }))
             }));
+            if (this.scene3D && typeof this.sync3DHighlights === 'function') {
+                this.sync3DHighlights();
+            }
         },
 
         // 样式工具：地图卡片颜色只在前端派生 CSS 变量，不写回业务数据。

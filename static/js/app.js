@@ -14,11 +14,18 @@ function app() {
             await this.loadMapData();
             this.mapHighlights = boxIds;
             this.updateMapPickLabels();
+            if (this.mapViewMode === '3d' && this.scene3D) {
+                if (typeof this.sync3DHighlights === 'function') this.sync3DHighlights();
+                if (typeof this.reveal3DHighlights === 'function') this.reveal3DHighlights();
+            }
             this.page = 'map';
         },
         refreshMapPickLabels: function refreshMapPickLabels() {
             if (typeof this.updateMapPickLabels === 'function') {
                 this.updateMapPickLabels();
+            }
+            if (this.scene3D && typeof this.sync3DHighlights === 'function') {
+                this.sync3DHighlights();
             }
         }
     });
@@ -43,6 +50,8 @@ function app() {
             }
         }
     });
+    // 3D 地图功能模块：依赖 api 进行格子数据懒加载和布局 API 调用。
+    const map3dFeature = window.InventoryModules?.createMap3DFeature?.({ api, logAction });
 
     // Alpine 根状态按领域分区排列，后续模块通过 InventoryModules.mergeFeature 进行轻量注入。
     const appState = {
@@ -160,5 +169,6 @@ function app() {
     const appWithStorage = window.InventoryModules?.mergeFeature(appWithComponents, storageFeature) || appWithComponents;
     const appWithMap = window.InventoryModules?.mergeFeature(appWithStorage, mapFeature) || appWithStorage;
     const appWithBom = window.InventoryModules?.mergeFeature(appWithMap, bomFeature) || appWithMap;
-    return window.InventoryModules?.mergeFeature(appWithBom, automationFeature) || appWithBom;
+    const appWith3D = window.InventoryModules?.mergeFeature(appWithBom, map3dFeature) || appWithBom;
+    return window.InventoryModules?.mergeFeature(appWith3D, automationFeature) || appWith3D;
 }

@@ -992,16 +992,25 @@ class ComponentRepository(BaseRepository):
                 """
                 SELECT
                     cb.*,
-                    COUNT(b.id) AS box_count,
-                    COALESCE(SUM(b.rows * b.cols), 0) AS total_slots,
-                    COUNT(DISTINCT c.compartment_id) AS used_slots,
-                    COALESCE(SUM(c.quantity), 0) AS total_quantity
+                    COALESCE(box_stats.box_count, 0) AS box_count,
+                    COALESCE(box_stats.total_slots, 0) AS total_slots,
+                    COALESCE(component_stats.used_slots, 0) AS used_slots,
+                    COALESCE(component_stats.total_quantity, 0) AS total_quantity
                 FROM cabinets cb
-                LEFT JOIN boxes b ON b.cabinet_id = cb.id
-                LEFT JOIN components c ON c.box_id = b.id
-                GROUP BY cb.id
+                LEFT JOIN (
+                    SELECT cabinet_id, COUNT(*) AS box_count, SUM(rows * cols) AS total_slots
+                    FROM boxes
+                    GROUP BY cabinet_id
+                ) box_stats ON box_stats.cabinet_id = cb.id
+                LEFT JOIN (
+                    SELECT b.cabinet_id,
+                           COUNT(DISTINCT c.compartment_id) AS used_slots,
+                           SUM(c.quantity) AS total_quantity
+                    FROM boxes b
+                    LEFT JOIN components c ON c.box_id = b.id
+                    GROUP BY b.cabinet_id
+                ) component_stats ON component_stats.cabinet_id = cb.id
                 ORDER BY cb.name
                 """,
             )
             return [dict(row) for row in rows]
-
