@@ -79,7 +79,7 @@ function app() {
 
         // 应用生命周期：初始化只编排数据加载，不承担具体领域计算。
         async initApp() {
-            await Promise.all([this.loadCategories(), this.loadCabinets(), this.loadBoxes(), this.loadLedConfig()]);
+            await Promise.all([this.loadCategories(), this.loadCabinets(), this.loadBoxes(), this.loadLedConfig(), this.loadNfcConfig()]);
             await this.loadDashboard();
             await this.openComponentFromUrl();
         },
@@ -90,7 +90,7 @@ function app() {
             if (pageId === 'components') await this.loadComponents();
             if (pageId === 'boxes') await Promise.all([this.loadCabinets(), this.loadBoxes()]);
             if (pageId === 'map') await this.loadMapData();
-            if (pageId === 'nfc') await this.loadBoxes();
+            if (pageId === 'nfc') await Promise.all([this.loadBoxes(), this.loadNfcConfig()]);
         },
 
         closeAllModals() {

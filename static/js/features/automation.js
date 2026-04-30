@@ -31,6 +31,25 @@
     }
 
     /**
+     * 生成 NFC 读写器表单默认值。
+     * linked_led_device_id 用来表达同一 ESP32 同时承载 LED 与 NFC，后端同步时会合并配置。
+     */
+    function emptyNfcDeviceForm() {
+        return {
+            id: null,
+            name: '',
+            host: '',
+            port: 80,
+            enabled: true,
+            linked_led_device_id: '',
+            module_type: 'PN532',
+            device_token: '',
+            allow_erase: false,
+            allow_lock: false
+        };
+    }
+
+    /**
      * 标准化 LED 全局配置。
      * 该函数保持纯输入输出，便于设置页、初始化和保存结果复用。
      */
@@ -64,6 +83,19 @@
             led_index: Math.max(0, Number(item.led_index || 0)),
             color: normalizeLedColor(item.color)
         }));
+    }
+
+    /**
+     * 标准化 NFC 全局配置。
+     * 远程 NFC 以 Flask 为代理入口，因此这里保存的默认设备只作为前端操作的便利选项。
+     */
+    function normalizeNfcConfig(config = {}) {
+        return {
+            id: config.id || 1,
+            enabled: config.enabled === true || Number(config.enabled || 0) === 1,
+            default_device_id: config.default_device_id || '',
+            default_timeout_ms: Number(config.default_timeout_ms || 10000)
+        };
     }
 
     /**
@@ -166,7 +198,16 @@
                 ledClearLoading: false,
                 ledClearMessage: '',
                 ledPowerOffLoading: false,
-                ledPowerOffMessage: ''
+                ledPowerOffMessage: '',
+                nfcConfig: { enabled: false, default_device_id: '', default_timeout_ms: 10000 },
+                nfcDevices: [],
+                nfcDeviceId: '',
+                nfcDeviceForm: null,
+                nfcTestResults: {},
+                nfcTestLoading: {},
+                nfcSyncLoading: {},
+                nfcReadLoading: false,
+                nfcWriteLoading: false
             },
 
             methods: {
@@ -189,7 +230,7 @@
                     this.generatedToken = '';
                     this.tokenForm = { name: '' };
                     this.settingsTab = 'token';
-                    await Promise.all([this.loadApiTokens(), this.loadLedConfig()]);
+                    await Promise.all([this.loadApiTokens(), this.loadLedConfig(), this.loadNfcConfig()]);
                 },
 
                 async loadApiTokens() {
@@ -266,6 +307,7 @@
                 normalizeLedConfig,
                 normalizeLedColor,
                 normalizeLedMappings,
+                normalizeNfcConfig,
 
                 async loadLedConfig() {
                     try {
@@ -276,6 +318,128 @@
                         this.ledMappings = normalizeLedMappings(data?.mappings || []);
                     } catch (err) {
                         notify(this, '加载 LED 配置失败：' + err.message, 'error');
+                    }
+                },
+
+                async loadNfcConfig() {
+                    try {
+                        const data = await apiClient.get('/api/settings/nfc');
+                        this.nfcConfig = normalizeNfcConfig(data?.config || {});
+                        this.nfcDevices = data?.devices || [];
+                        if (!this.nfcDeviceId) {
+                            this.nfcDeviceId = this.nfcConfig.default_device_id || this.nfcDevices[0]?.id || '';
+                        }
+                    } catch (err) {
+                        notify(this, '加载 NFC 配置失败：' + err.message, 'error');
+                    }
+                },
+
+                async saveNfcConfig() {
+                    try {
+                        const payload = {
+                            ...this.nfcConfig,
+                            default_device_id: this.nfcConfig.default_device_id || null,
+                            default_timeout_ms: Number(this.nfcConfig.default_timeout_ms || 10000)
+                        };
+                        this.nfcConfig = normalizeNfcConfig(await apiClient.put('/api/settings/nfc', payload));
+                        this.nfcDeviceId = this.nfcConfig.default_device_id || this.nfcDeviceId;
+                        notify(this, 'NFC 配置已保存', 'success');
+                    } catch (err) {
+                        notify(this, '保存 NFC 配置失败：' + err.message, 'error');
+                    }
+                },
+
+                createNfcDevice() {
+                    this.nfcDeviceForm = emptyNfcDeviceForm();
+                },
+
+                editNfcDevice(device) {
+                    this.nfcDeviceForm = {
+                        ...emptyNfcDeviceForm(),
+                        ...device,
+                        enabled: Number(device.enabled || 0) === 1,
+                        linked_led_device_id: device.linked_led_device_id || '',
+                        device_token: '',
+                        allow_erase: Number(device.allow_erase || 0) === 1,
+                        allow_lock: Number(device.allow_lock || 0) === 1
+                    };
+                },
+
+                cancelNfcDeviceForm() {
+                    this.nfcDeviceForm = null;
+                },
+
+                async saveNfcDevice() {
+                    const form = { ...this.nfcDeviceForm };
+                    if (!String(form.name || '').trim() || !String(form.host || '').trim()) {
+                        notify(this, '请填写 NFC 设备名称和地址', 'warning');
+                        return;
+                    }
+                    try {
+                        const payload = {
+                            ...form,
+                            port: Number(form.port || 80),
+                            enabled: !!form.enabled,
+                            linked_led_device_id: form.linked_led_device_id || null,
+                            allow_erase: !!form.allow_erase,
+                            allow_lock: !!form.allow_lock
+                        };
+                        if (!String(payload.device_token || '').trim()) delete payload.device_token;
+                        let saved;
+                        if (payload.id) saved = await apiClient.put(`/api/settings/nfc/devices/${payload.id}`, payload);
+                        else saved = await apiClient.post('/api/settings/nfc/devices', payload);
+                        this.nfcDeviceForm = null;
+                        await this.loadNfcConfig();
+                        this.nfcDeviceId = saved?.id || this.nfcDeviceId;
+                        notify(this, 'NFC 设备已保存', 'success');
+                    } catch (err) {
+                        notify(this, '保存 NFC 设备失败：' + err.message, 'error');
+                    }
+                },
+
+                applyLinkedLedDeviceToNfcForm() {
+                    if (!this.nfcDeviceForm) return;
+                    const linkedId = Number(this.nfcDeviceForm.linked_led_device_id || 0);
+                    const ledDevice = this.ledDevices.find((device) => Number(device.id) === linkedId);
+                    if (!ledDevice) return;
+                    this.nfcDeviceForm.name = `${ledDevice.name}-nfc`;
+                    this.nfcDeviceForm.host = ledDevice.host || '';
+                    this.nfcDeviceForm.port = Number(ledDevice.port || 80);
+                    this.nfcDeviceForm.enabled = Number(ledDevice.enabled || 0) === 1;
+                },
+
+                async deleteNfcDevice(device) {
+                    if (!device?.id || !confirmFn(`删除 NFC 设备「${device.name}」？`)) return;
+                    try {
+                        await apiClient.del(`/api/settings/nfc/devices/${device.id}`);
+                        if (Number(this.nfcDeviceId || 0) === Number(device.id)) this.nfcDeviceId = '';
+                        await this.loadNfcConfig();
+                        notify(this, 'NFC 设备已删除', 'success');
+                    } catch (err) {
+                        notify(this, '删除 NFC 设备失败：' + err.message, 'error');
+                    }
+                },
+
+                async testNfcDevice(deviceId) {
+                    this.nfcTestLoading[deviceId] = true;
+                    try {
+                        this.nfcTestResults[deviceId] = await apiClient.post(`/api/settings/nfc/devices/${deviceId}/test`, {});
+                    } catch (err) {
+                        this.nfcTestResults[deviceId] = { connected: false, error: err.message };
+                    } finally {
+                        this.nfcTestLoading[deviceId] = false;
+                    }
+                },
+
+                async syncNfcDevice(deviceId) {
+                    this.nfcSyncLoading[deviceId] = true;
+                    try {
+                        await apiClient.post(`/api/settings/nfc/devices/${deviceId}/sync`, {});
+                        notify(this, 'NFC 设备配置已同步', 'success');
+                    } catch (err) {
+                        notify(this, '同步 NFC 设备失败：' + err.message, 'error');
+                    } finally {
+                        this.nfcSyncLoading[deviceId] = false;
                     }
                 },
 
@@ -626,6 +790,67 @@
                 },
 
                 componentIdFromScan,
+
+                async nfcRemoteRead() {
+                    if (!this.nfcConfig.enabled) {
+                        notify(this, '请先启用 NFC 远程读写', 'warning');
+                        return;
+                    }
+                    const deviceId = Number(this.nfcDeviceId || 0);
+                    if (!deviceId) {
+                        notify(this, '请先选择 NFC 读写器', 'warning');
+                        return;
+                    }
+                    this.nfcReadLoading = true;
+                    this.nfcStatus = { type: 'pending', title: '等待 NFC 标签', message: '请将标签靠近读写器。' };
+                    try {
+                        const result = await apiClient.post(`/api/nfc/devices/${deviceId}/read`, {
+                            timeout_ms: Number(this.nfcConfig.default_timeout_ms || 10000),
+                            mode: 'ndef'
+                        });
+                        const lookup = result.lookup?.bound ? `已绑定：${result.lookup.box_name}` : '未绑定收纳盒';
+                        this.nfcStatus = { type: 'success', title: '读取成功', message: `${result.uid} · ${lookup}` };
+                        logActionFn('NFC', `远程读卡 device=${deviceId} UID=${result.uid}`);
+                    } catch (err) {
+                        this.nfcStatus = { type: 'error', title: '读取失败', message: err.message };
+                        logActionFn('NFC', '远程读卡失败：' + err.message);
+                    } finally {
+                        this.nfcReadLoading = false;
+                    }
+                },
+
+                async nfcRemoteWriteBox() {
+                    if (!this.nfcConfig.enabled) {
+                        notify(this, '请先启用 NFC 远程读写', 'warning');
+                        return;
+                    }
+                    const deviceId = Number(this.nfcDeviceId || 0);
+                    if (!deviceId) {
+                        notify(this, '请先选择 NFC 读写器', 'warning');
+                        return;
+                    }
+                    if (!this.nfcBoxId) {
+                        notify(this, '请先选择收纳盒', 'warning');
+                        return;
+                    }
+                    this.nfcWriteLoading = true;
+                    this.nfcStatus = { type: 'pending', title: '准备写入', message: '请将标签靠近读写器并保持不动。' };
+                    try {
+                        const result = await apiClient.post(`/api/nfc/devices/${deviceId}/write-box`, {
+                            box_id: Number(this.nfcBoxId),
+                            timeout_ms: Number(this.nfcConfig.default_timeout_ms || 15000),
+                            overwrite: true
+                        });
+                        this.nfcStatus = { type: 'success', title: '写入并绑定成功', message: `${result.uid} · ${result.box?.name || result.text}` };
+                        logActionFn('NFC', `远程写入收纳盒 ID=${this.nfcBoxId} UID=${result.uid}`);
+                        await this.loadBoxes();
+                    } catch (err) {
+                        this.nfcStatus = { type: 'error', title: '写入失败', message: err.message };
+                        logActionFn('NFC', '远程写入失败：' + err.message);
+                    } finally {
+                        this.nfcWriteLoading = false;
+                    }
+                },
 
                 async nfcBind() {
                     if (!this.nfcBoxId) {

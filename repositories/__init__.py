@@ -6,4 +6,5 @@ from repositories.component_repo import ComponentRepository
 from repositories.stock_repo import StockRepository
 from repositories.document_repo import DocumentRepository
 from repositories.nfc_repo import NfcRepository
+from repositories.nfc_device_repository import NfcDeviceRepository
 from repositories.token_repo import TokenRepository

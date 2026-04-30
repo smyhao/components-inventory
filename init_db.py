@@ -171,6 +171,33 @@ CREATE TABLE IF NOT EXISTS led_box_mapping (
     UNIQUE(strip_id, led_index)
 );
 
+CREATE TABLE IF NOT EXISTS nfc_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    default_device_id INTEGER,
+    default_timeout_ms INTEGER NOT NULL DEFAULT 10000,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (default_device_id) REFERENCES nfc_devices(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS nfc_devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 80,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    linked_led_device_id INTEGER,
+    module_type TEXT NOT NULL DEFAULT 'PN532',
+    device_token TEXT DEFAULT '',
+    default_timeout_ms INTEGER NOT NULL DEFAULT 10000,
+    allow_erase INTEGER NOT NULL DEFAULT 0,
+    allow_lock INTEGER NOT NULL DEFAULT 0,
+    last_test_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (linked_led_device_id) REFERENCES led_devices(id) ON DELETE SET NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_components_name ON components(name);
 CREATE INDEX IF NOT EXISTS idx_components_model ON components(model);
 CREATE INDEX IF NOT EXISTS idx_components_category_id ON components(category_id);
@@ -186,6 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_component_tags_tag_id ON component_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_active ON api_tokens(active);
 CREATE INDEX IF NOT EXISTS idx_led_strips_device_id ON led_strips(device_id);
 CREATE INDEX IF NOT EXISTS idx_led_box_mapping_strip_id ON led_box_mapping(strip_id);
+CREATE INDEX IF NOT EXISTS idx_nfc_devices_enabled ON nfc_devices(enabled);
 """
 
 
@@ -231,6 +259,14 @@ def init_database(database_path: Path) -> None:
         led_config_count = conn.execute("SELECT COUNT(*) FROM led_config").fetchone()[0]
         if led_config_count == 0:
             conn.execute("INSERT INTO led_config (id, enabled) VALUES (1, 0)")
+
+        nfc_config_count = conn.execute("SELECT COUNT(*) FROM nfc_config").fetchone()[0]
+        if nfc_config_count == 0:
+            conn.execute("INSERT INTO nfc_config (id, enabled, default_timeout_ms) VALUES (1, 0, 10000)")
+
+        nfc_device_columns = {row[1] for row in conn.execute("PRAGMA table_info(nfc_devices)").fetchall()}
+        if "linked_led_device_id" not in nfc_device_columns:
+            conn.execute("ALTER TABLE nfc_devices ADD COLUMN linked_led_device_id INTEGER")
 
         existing = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
         if existing == 0:

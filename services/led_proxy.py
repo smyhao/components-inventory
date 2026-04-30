@@ -40,9 +40,18 @@ class LedProxy:
         """向 ESP32 删除单条灯带，立即热重载。"""
         return self._request_json(device, "POST", "/api/config/strip/remove", {"gpio": gpio})
 
-    def push_full_config(self, device: dict[str, Any], strips: list[dict[str, Any]], http_port: int = 80) -> dict[str, Any]:
+    def push_full_config(
+        self,
+        device: dict[str, Any],
+        strips: list[dict[str, Any]],
+        http_port: int = 80,
+        extra_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """向 ESP32 推送完整灯带配置，立即热重载（用于批量同步）。"""
-        return self._request_json(device, "POST", "/api/config", {"strips": strips, "http_port": http_port})
+        payload = {"strips": strips, "http_port": http_port}
+        if extra_config:
+            payload.update(extra_config)
+        return self._request_json(device, "POST", "/api/config", payload)
 
     def _request_json(
         self,

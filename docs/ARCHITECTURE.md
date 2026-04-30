@@ -27,7 +27,7 @@
                         │
 ┌───────────────────────▼──────────────────────────────┐
 │  服务层 (services/)        — 纯 Python 业务逻辑        │
-│  bom_service / import_service / label_service / led_*  │
+│  bom_service / import_service / label_service / led_* / nfc_* │
 │  _parsing (共享文件解析工具)                            │
 └───────────────────────┬──────────────────────────────┘
                         │
@@ -85,7 +85,7 @@ components-inventory/
 │   ├── components.py       #   元器件 CRUD + 导入/导出/QR
 │   ├── stock_operations.py #   出入库 + 日志 + 统计
 │   ├── tags.py             #   图片/文档上传删除
-│   ├── nfc.py              #   NFC 绑定/写入/查询
+│   ├── nfc.py              #   NFC 绑定/写入/查询 + ESP32-S3 远程读写
 │   ├── map.py              #   地图数据 + 背景 + 搜索
 │   ├── bom.py              #   BOM 导入/领料/导出
 │   ├── auth.py             #   Token 管理 + 认证中间件 + 前端日志
@@ -98,7 +98,9 @@ components-inventory/
 │   ├── import_service.py   #   元器件导入/导出（回调式 repo 访问）
 │   ├── label_service.py    #   QR 码 SVG + 标签打印页生成
 │   ├── led_service.py      #   LED 定位业务编排 + 灯带同步到 ESP32
-│   └── led_proxy.py        #   ESP32 HTTP 代理（LED 控制 + 配置同步）
+│   ├── led_proxy.py        #   ESP32 HTTP 代理（LED 控制 + 配置同步）
+│   ├── nfc_device_service.py # ESP32-S3 NFC 远程读写业务编排
+│   └── nfc_proxy.py        #   ESP32-S3 NFC HTTP 协议代理
 │
 ├── repositories/           # 仓储层 — 原生 SQL 数据访问
 │   ├── __init__.py         #   导出所有仓储类
@@ -111,7 +113,8 @@ components-inventory/
 │   ├── component_repo.py   #   ComponentRepository（最大，33+ 方法）
 │   ├── stock_repo.py       #   StockRepository（3 方法）
 │   ├── document_repo.py    #   DocumentRepository（4 方法）
-│   ├── nfc_repo.py         #   NfcRepository（3 方法）
+│   ├── nfc_repo.py         #   NfcRepository（绑定/载荷/查询）
+│   ├── nfc_device_repository.py # NfcDeviceRepository（配置/设备）
 │   └── led_repository.py   #   LedRepository（配置/设备/灯带/映射）
 │
 ├── models.py               # InventoryRepository — 薄外观，委托给子仓储
@@ -161,7 +164,7 @@ components-inventory/
 │   ├── config.py           #   配置文件管理（多 profile）
 │   └── errors.py           #   错误类定义
 │
-├── tests/                  # pytest 测试套件（128 个测试）
+├── tests/                  # pytest 测试套件（持续覆盖 API、服务和仓储）
 │   ├── conftest.py         #   共享 fixtures
 │   ├── test_categories_api.py
 │   ├── test_cabinets_api.py
@@ -172,6 +175,7 @@ components-inventory/
 │   ├── test_documents_api.py
 │   ├── test_tokens_api.py
 │   ├── test_nfc_api.py
+│   ├── test_nfc_device_feature.py
 │   ├── test_map_api.py
 │   ├── test_bom_api.py
 │   ├── test_stats_api.py
@@ -194,7 +198,7 @@ components-inventory/
 
 主界面仍由 `static/index.html` 通过 `x-data="app()"` 启动，HTML 只保留页面区块、移动端底部导航、模态框和脚本加载顺序等结构说明，不承载业务规则。
 
-前端 JS 以 `static/js/modules/core.js` 提供 `window.InventoryModules` 命名空间、`mergeFeature` 和 `createToast` 等轻量组合工具；`static/js/modules/http.js` 负责 HTTP 请求与上传下载基础能力；领域交互逐步放入 `static/js/features/`，再由 `static/js/app.js` 保持兼容入口并按需合并。`automation.js` 承载隐藏设置入口、Token 管理、LED 定位配置与动作、NFC 读写和扫码录入，扫码识别后通过注入入口触发元器件详情或表单，避免直接耦合元器件领域内部实现。
+前端 JS 以 `static/js/modules/core.js` 提供 `window.InventoryModules` 命名空间、`mergeFeature` 和 `createToast` 等轻量组合工具；`static/js/modules/http.js` 负责 HTTP 请求与上传下载基础能力；领域交互逐步放入 `static/js/features/`，再由 `static/js/app.js` 保持兼容入口并按需合并。`automation.js` 承载隐藏设置入口、Token 管理、LED 定位配置与动作、NFC 远程读写器配置、NFC 读写和扫码录入，扫码识别后通过注入入口触发元器件详情或表单，避免直接耦合元器件领域内部实现。
 
 3D 地图视图以 `static/js/3d/` 存放引擎层代码，包括场景管理、参数化模型、射线交互、标签、高亮动画和预设布局。`static/js/features/map-3d.js` 作为 Alpine 功能模块桥接 2D/3D 切换、格子数据懒加载、布局保存和跨功能高亮；Three.js、OrbitControls、CSS2DRenderer 放在 `static/vendor/`，通过 `index.html` 的 importmap 以 ES Module 方式加载。3D 引擎层不直接持有 Alpine 状态，交互层通过 `InteractionManager(sceneManager, alpineContext)` 显式桥接，3D 专用样式集中在 `static/css/map-3d.css`。
 
@@ -265,6 +269,7 @@ InventoryRepository
   ├── _stock_repo      → StockRepository
   ├── _document_repo   → DocumentRepository
   ├── _nfc_repo        → NfcRepository
+  ├── _nfc_device_repo → NfcDeviceRepository
   └── _led_repo        → LedRepository
 ```
 
@@ -338,6 +343,15 @@ led_strips          设备下挂载的灯带
 led_box_mapping     收纳盒到 LED 的唯一映射
 ├── id, box_id → boxes, strip_id → led_strips, led_index, color
 ├── UNIQUE(box_id), UNIQUE(strip_id, led_index)
+
+nfc_config          NFC 远程读写全局配置
+├── id=1, enabled, default_device_id → nfc_devices, default_timeout_ms, updated_at
+
+nfc_devices         ESP32-S3 NFC 读写器
+├── id, name (UNIQUE), host, port, enabled
+├── linked_led_device_id → led_devices, module_type, device_token
+├── default_timeout_ms, allow_erase, allow_lock, last_test_at
+├── created_at, updated_at
 ```
 
 ### 5.2 关键约束
@@ -346,6 +360,7 @@ led_box_mapping     收纳盒到 LED 的唯一映射
 - `boxes.nfc_uid` 为 `UNIQUE`，一个 NFC 标签只能绑定一个收纳盒
 - `led_box_mapping.box_id` 为 `UNIQUE`，一个收纳盒只能映射一个 LED
 - `led_box_mapping(strip_id, led_index)` 为 `UNIQUE`，同一灯带同一 LED 只能映射一个收纳盒
+- `nfc_devices.linked_led_device_id` 可选关联 LED 设备，用于同一 ESP32 同时承载 LED 与 NFC 时合并配置同步
 - 所有外键启用 `PRAGMA foreign_keys = ON`
 - 删除收纳盒时级联删除格子（`ON DELETE CASCADE`）
 - 删除元器件时级联删除图片、文档、库存日志、标签关联
@@ -429,6 +444,18 @@ led_box_mapping     收纳盒到 LED 的唯一映射
 | POST | `/api/nfc/write` | 生成 NFC NDEF 内容 |
 | GET | `/api/nfc/lookup/<uid>` | 通过 NFC UID 查找收纳盒 |
 | GET | `/api/box/<id>` | 获取收纳盒数据（NFC 扫码入口） |
+| GET | `/api/settings/nfc` | 获取 NFC 全局配置和读写器列表 |
+| PUT | `/api/settings/nfc` | 更新 NFC 全局配置 |
+| POST | `/api/settings/nfc/devices` | 创建 NFC 读写器 |
+| PUT | `/api/settings/nfc/devices/<id>` | 更新 NFC 读写器 |
+| DELETE | `/api/settings/nfc/devices/<id>` | 删除 NFC 读写器 |
+| POST | `/api/settings/nfc/devices/<id>/test` | 测试 ESP32-S3 `/api/health` |
+| POST | `/api/settings/nfc/devices/<id>/sync` | 同步 NFC 配置到 ESP32-S3 |
+| POST | `/api/nfc/devices/<id>/read` | 远程读取 NFC 标签 |
+| POST | `/api/nfc/devices/<id>/write-box` | 写入收纳盒 NDEF 并绑定 UID |
+| POST | `/api/nfc/devices/<id>/write` | 写入自定义 NDEF |
+| POST | `/api/nfc/devices/<id>/erase` | 远程擦除标签 |
+| POST | `/api/nfc/devices/<id>/cancel` | 取消当前 NFC 操作 |
 
 ### BOM
 
@@ -552,7 +579,7 @@ LED 定位由 Flask 作为局域网代理：前端触发定位按钮 → `routes
 - 全局开关和闪烁参数存储在 `led_config`，颜色属于每条 `led_box_mapping`。
 - 单盒和元器件定位发送单条 LED 指令；BOM 定位按 `device_id` 分组，每台 ESP32 只发送一次请求。
 - 设备连接测试失败时返回 `{connected: false, error: "..."}`，不会让前端收到 500。
-- 前端设置弹窗包含 `设备 Token` 与 `LED 定位` 两个标签页，定位入口仅在 `ledConfig.enabled` 为真时显示。
+- 前端设置弹窗包含 `设备 Token`、`LED 定位` 与 `NFC 读写器` 标签页，定位入口仅在 `ledConfig.enabled` 为真时显示。
 
 ### 8.6 灯带远程配置同步
 
@@ -562,7 +589,20 @@ LED 定位由 Flask 作为局域网代理：前端触发定位按钮 → `routes
 
 - 数据库为主、ESP32 为从。DB 保存始终成功，ESP32 同步失败时响应中附加 `sync_warning` 字段，不回滚数据库。
 - 设备禁用时跳过同步，不产生警告。
-- 设备卡片提供"同步"按钮，通过 `POST /api/settings/led/devices/<id>/sync` 端点调用 ESP32 `/api/config` 进行全量同步，将数据库中该设备的所有灯带一次性推送到硬件。
+- 设备卡片提供"同步"按钮，通过 `POST /api/settings/led/devices/<id>/sync` 端点调用 ESP32 `/api/config` 进行全量同步，将数据库中该设备的所有灯带一次性推送到硬件；若同一 ESP32 关联了 NFC 读写器，同步包会附带 NFC 配置，避免整包保存时覆盖另一类功能。
+
+### 8.7 NFC 远程读写
+
+NFC 远程读写沿用 LED 的局域网代理模式：前端调用库存系统 API → `routes/nfc.py` 解析请求 → `NfcDeviceService` 生成 request_id、NDEF 载荷并编排绑定逻辑 → `NfcProxy` 通过 HTTP JSON 调用 ESP32-S3 → `NfcRepository` 更新或查询 `boxes.nfc_uid`。
+
+关键约束：
+
+- 数据库仍以库存系统为主，ESP32-S3 不保存收纳盒业务数据。
+- `NfcProxy` 统一解析设备响应信封，并把网络错误、HTTP 错误和设备业务错误转换为 `InventoryError`。
+- NFC 读写超时统一使用 `nfc_config.default_timeout_ms`，避免全局远程读写配置和单台设备表单出现两套默认值。
+- 远程写入收纳盒时复用 `repo.get_nfc_payload(box_id, SERVER_URL)` 生成 URI/Text 两条 NDEF 记录，写入成功后使用设备返回的 UID 调用 `repo.bind_nfc()`。
+- `nfc_devices.linked_led_device_id` 表示 NFC 与 LED 共用同一 ESP32；NFC 同步会带上 LED 灯带配置，LED 全量同步也会带上 NFC 配置，保证固件端整包配置不会相互覆盖。
+- 前端 NFC 页面默认使用远程读写器读卡和写入绑定，同时保留浏览器 Web NFC 读取/写入作为本机备用入口。
 
 ---
 
@@ -671,7 +711,7 @@ python -m pytest tests/ -v
 
 ### 测试覆盖
 
-128 个测试覆盖所有 API 端点，包括正常流程和错误场景。按领域分为 14 个文件：
+测试覆盖主要 API 端点、服务编排和仓储约束，包括正常流程和错误场景。按领域分为以下文件：
 
 | 文件 | 覆盖 | 用例数 |
 |---|---|---|
@@ -685,10 +725,11 @@ python -m pytest tests/ -v
 | test_tokens_api.py | Token CRUD + 认证中间件 | 10 |
 | test_stats_api.py | 统计概览 | 4 |
 | test_nfc_api.py | NFC 绑定/写入/查询/盒子数据 | 8 |
+| test_nfc_device_feature.py | NFC 读写器表初始化、仓储、服务和 API | 10 |
 | test_map_api.py | 地图数据/背景/搜索 | 8 |
 | test_bom_api.py | BOM 导入/领料/导出 | 8 |
 | test_frontend_log_api.py | 前端日志上报 | 4 |
-| test_led_feature.py | LED 表初始化、仓储、服务、API 和灯带同步 | 19 |
+| test_led_feature.py | LED 表初始化、仓储、服务、API、灯带同步和 LED/NFC 共用设备同步 | 20 |
 
 ### 添加新测试
 

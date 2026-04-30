@@ -186,7 +186,11 @@ class LedService:
         strips = self.repo.list_led_strips(device_id=device_id)
         esp_strips = [{"gpio": int(s["gpio_num"]), "led_count": int(s["led_count"])} for s in strips]
         sync_result = self._try_sync_strip(
-            device, "sync_all", strips=esp_strips, http_port=int(device.get("port", 80)),
+            device,
+            "sync_all",
+            strips=esp_strips,
+            http_port=int(device.get("port", 80)),
+            extra_config=self._nfc_config_for_led_device(device_id, device),
         )
         result: dict[str, Any] = {"device_id": device_id, "synced_strips": len(esp_strips)}
         if sync_result and sync_result.get("sync_error"):
@@ -203,11 +207,38 @@ class LedService:
             if action == "remove":
                 return self.proxy.remove_strip(device, kwargs["gpio"])
             if action == "sync_all":
-                return self.proxy.push_full_config(device, kwargs["strips"], kwargs.get("http_port", 80))
+                return self.proxy.push_full_config(
+                    device,
+                    kwargs["strips"],
+                    kwargs.get("http_port", 80),
+                    kwargs.get("extra_config"),
+                )
         except InventoryError as exc:
             self.file_logger.write_backend("LED", f"ESP32 同步失败: device={device.get('name')}, action={action}, error={exc}")
             return {"sync_error": str(exc)}
         return None
+
+    def _nfc_config_for_led_device(self, device_id: int, led_device: dict[str, Any]) -> dict[str, Any]:
+        """同一 ESP32 承载 LED+NFC 时，LED 全量同步也附带 NFC 配置，避免覆盖固件端配置。"""
+        nfc_device = None
+        if hasattr(self.repo, "find_nfc_device_for_led_device"):
+            nfc_device = self.repo.find_nfc_device_for_led_device(device_id)
+        if not nfc_device and hasattr(self.repo, "find_nfc_devices_by_endpoint"):
+            matches = self.repo.find_nfc_devices_by_endpoint(led_device.get("host"), int(led_device.get("port") or 80))
+            nfc_device = matches[0] if matches else None
+        if not nfc_device:
+            return {}
+        return {
+            "nfc": {
+                "device_name": nfc_device.get("name"),
+                "module": {"type": nfc_device.get("module_type") or "PN532"},
+                "operation": {
+                    "default_timeout_ms": clean_int(nfc_device.get("default_timeout_ms"), 10000),
+                    "allow_erase": bool(nfc_device.get("allow_erase")),
+                    "allow_lock": bool(nfc_device.get("allow_lock")),
+                },
+            }
+        }
 
     def _unique_ids(self, values: list[Any]) -> list[int]:
         result: list[int] = []

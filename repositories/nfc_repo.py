@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# 本文件属于仓储层，负责收纳盒 NFC UID 绑定、NDEF 业务载荷生成和 UID 查询。
+
 from pathlib import Path
 from typing import Any
 
@@ -46,3 +48,12 @@ class NfcRepository(BaseRepository):
             "box": self.box_repo.get_box(box["id"]),
             "grid": self.box_repo.get_box_grid(box["id"]),
         }
+
+    def lookup_nfc_summary(self, uid: str) -> dict[str, Any]:
+        """远程读卡成功后只需要轻量摘要，避免每次读 UID 都加载完整格子数据。"""
+        uid = clean_text(uid).upper()
+        with self.connect() as conn:
+            box = self._fetchone(conn, "SELECT id, name FROM boxes WHERE nfc_uid = ?", (uid,))
+        if not box:
+            return {"bound": False}
+        return {"bound": True, "box_id": box["id"], "box_name": box["name"]}

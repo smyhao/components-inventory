@@ -2618,6 +2618,15 @@ th {
 .nfc-status.pending { background: #f7efe3; border-color: rgba(219, 205, 184, 0.80); }
 .nfc-status.pending strong { color: var(--warn); }
 
+.nfc-local-actions {
+    padding-top: 4px;
+    border-top: 1px dashed rgba(160, 142, 116, 0.40);
+}
+
+.nfc-remote-controls {
+    display: contents;
+}
+
 /* ========== 表单元素 ========== */
 input,
 select,
@@ -3026,6 +3035,45 @@ label {
     min-width: 150px;
 }
 
+.nfc-settings-summary {
+    background: linear-gradient(180deg, #fbf4e9, #f6eddf);
+}
+
+.nfc-config-grid {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) 108px;
+    gap: 12px;
+    align-items: end;
+    margin-top: 16px;
+}
+
+.nfc-device-count {
+    min-height: 51px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    background: rgba(255, 253, 249, 0.82);
+    border: 1px solid rgba(219, 205, 184, 0.72);
+    box-shadow: var(--shadow-xs);
+}
+
+.nfc-device-count span,
+.nfc-section-hint,
+.nfc-form-head small,
+.nfc-permission-card small {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.nfc-device-count strong {
+    font-size: 20px;
+    line-height: 1;
+}
+
 .led-device-list,
 .led-mapping-list {
     display: flex;
@@ -3063,6 +3111,98 @@ label {
     border-radius: var(--radius-md);
     background: rgba(255, 253, 249, 0.70);
     border: 1px dashed rgba(127, 102, 65, 0.35);
+}
+
+.nfc-empty-state {
+    padding: 28px 12px;
+    text-align: center;
+}
+
+.nfc-device-form {
+    padding: 14px;
+    border-style: solid;
+    background: rgba(255, 253, 249, 0.84);
+}
+
+.nfc-form-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.nfc-form-head > div {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.nfc-form-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    align-items: end;
+}
+
+.nfc-form-wide {
+    grid-column: span 2;
+}
+
+.nfc-enable-switch {
+    min-height: 51px;
+    align-self: end;
+    justify-content: center;
+    padding: 0 12px;
+    border-radius: var(--radius-md);
+    background: rgba(31, 122, 108, 0.06);
+    border: 1px solid rgba(31, 122, 108, 0.18);
+}
+
+.nfc-permission-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.nfc-permission-card {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    min-height: 76px;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    background: rgba(255, 253, 249, 0.86);
+    border: 1px solid rgba(219, 205, 184, 0.85);
+}
+
+.nfc-permission-card.danger {
+    background: rgba(249, 228, 223, 0.38);
+    border-color: rgba(201, 93, 77, 0.24);
+}
+
+.nfc-permission-card input {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    accent-color: #1f7a6c;
+}
+
+.nfc-permission-card span {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.nfc-permission-card strong {
+    font-size: 13px;
+    color: var(--text);
+}
+
+.nfc-form-actions {
+    justify-content: flex-start;
+    margin-top: 14px;
 }
 
 .led-form-grid {
@@ -3185,8 +3325,15 @@ label {
     }
 
     .led-overview,
-    .led-form-grid {
+    .led-form-grid,
+    .nfc-config-grid,
+    .nfc-form-grid,
+    .nfc-permission-grid {
         grid-template-columns: 1fr;
+    }
+
+    .nfc-form-wide {
+        grid-column: span 1;
     }
 
     .led-mapping-row {

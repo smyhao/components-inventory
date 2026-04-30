@@ -470,6 +470,17 @@
                         </div>
                     </div>
                     <div class="section-card nfc-panel">
+                        <template x-if="nfcConfig.enabled">
+                            <div class="nfc-remote-controls">
+                                <label>远程读写器</label>
+                                <select x-model="nfcDeviceId">
+                                    <option value="">请选择 NFC 读写器</option>
+                                    <template x-for="device in nfcDevices" :key="device.id">
+                                        <option :value="device.id" x-text="`${device.name} · ${device.host}:${device.port}`"></option>
+                                    </template>
+                                </select>
+                            </div>
+                        </template>
                         <label>收纳盒</label>
                         <select x-model="nfcBoxId">
                             <option value="">请选择收纳盒</option>
@@ -477,9 +488,13 @@
                                 <option :value="box.id" x-text="box.name"></option>
                             </template>
                         </select>
-                        <div class="toolbar-actions">
-                            <button class="btn btn-primary" @click="nfcBind()">读取并绑定 UID</button>
-                            <button class="btn btn-secondary" @click="nfcWrite()">写入 NDEF 链接</button>
+                        <div class="toolbar-actions" x-show="nfcConfig.enabled">
+                            <button class="btn btn-primary" :disabled="nfcReadLoading || !nfcDeviceId" @click="nfcRemoteRead()" x-text="nfcReadLoading ? '读取中...' : '远程读卡'"></button>
+                            <button class="btn btn-secondary" :disabled="nfcWriteLoading || !nfcDeviceId || !nfcBoxId" @click="nfcRemoteWriteBox()" x-text="nfcWriteLoading ? '写入中...' : '远程写入并绑定'"></button>
+                        </div>
+                        <div class="toolbar-actions nfc-local-actions">
+                            <button class="btn btn-secondary" @click="nfcBind()">本机读取并绑定 UID</button>
+                            <button class="btn btn-secondary" @click="nfcWrite()">本机写入 NDEF 链接</button>
                         </div>
                         <div class="nfc-status" x-show="nfcStatus" :class="nfcStatus?.type">
                             <strong x-text="nfcStatus?.title"></strong>
@@ -797,6 +812,7 @@
                 <div class="settings-tabs">
                     <button class="settings-tab" :class="{ active: settingsTab === 'token' }" @click="settingsTab = 'token'">设备 Token</button>
                     <button class="settings-tab" :class="{ active: settingsTab === 'led' }" @click="settingsTab = 'led'; loadLedConfig()">LED 定位</button>
+                    <button class="settings-tab" :class="{ active: settingsTab === 'nfc' }" @click="settingsTab = 'nfc'; loadNfcConfig()">NFC 读写器</button>
                 </div>
                 <div class="settings-tab-panel" x-show="settingsTab === 'token'">
                     <div class="modal-soft-section">
@@ -828,6 +844,95 @@
                             </template>
                             <div class="empty-state" x-show="apiTokens.length === 0">还没有创建 Token</div>
                         </div>
+                    </div>
+                </div>
+                <div class="settings-tab-panel" x-show="settingsTab === 'nfc'">
+                    <div class="modal-soft-section nfc-settings-summary">
+                        <div class="led-toggle-row">
+                            <div>
+                                <h4>NFC 远程读写</h4>
+                                <p>启用后，NFC 页面通过 Flask 后端控制 ESP32-S3 读写器。</p>
+                            </div>
+                            <label class="switch-label"><input type="checkbox" x-model="nfcConfig.enabled" @change="saveNfcConfig()"><span>启用</span></label>
+                        </div>
+                        <div class="nfc-config-grid">
+                            <label>默认读写器<select x-model="nfcConfig.default_device_id" @change="saveNfcConfig()"><option value="">不指定</option><template x-for="device in nfcDevices" :key="device.id"><option :value="device.id" x-text="device.name"></option></template></select></label>
+                            <label>默认操作超时 ms<input type="number" min="1000" max="30000" step="500" x-model.number="nfcConfig.default_timeout_ms" @change="saveNfcConfig()"></label>
+                            <div class="nfc-device-count">
+                                <span>读写器</span>
+                                <strong x-text="nfcDevices.length"></strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal-soft-section">
+                        <div class="led-section-header">
+                            <div>
+                                <div class="section-mini-title">读写器设备</div>
+                                <small class="nfc-section-hint">关联 LED 设备时会自动复用同一单片机的地址和端口。</small>
+                            </div>
+                            <button class="btn btn-primary" x-show="!nfcDeviceForm" @click="createNfcDevice()">添加读写器</button>
+                        </div>
+                        <div class="led-device-list">
+                            <template x-for="device in nfcDevices" :key="device.id">
+                                <div class="led-device-card">
+                                    <div>
+                                        <strong x-text="device.name"></strong>
+                                        <span class="inventory-chip danger-chip" x-show="!device.enabled">禁用</span>
+                                        <span class="inventory-chip" x-show="device.device_token_configured">Token</span>
+                                        <small x-text="`${device.host}:${device.port} · ${device.module_type || 'PN532'}`"></small>
+                                        <small x-show="device.linked_led_device_id">与 LED 设备共用单片机</small>
+                                        <small x-show="nfcTestResults[device.id]" x-text="nfcTestResults[device.id]?.connected ? `OK · ${nfcTestResults[device.id].latency_ms}ms` : nfcTestResults[device.id]?.error"></small>
+                                    </div>
+                                    <div class="toolbar-actions">
+                                        <button class="btn btn-secondary" @click="testNfcDevice(device.id)" x-text="nfcTestLoading[device.id] ? '...' : '测试'"></button>
+                                        <button class="btn btn-secondary" @click="syncNfcDevice(device.id)" x-text="nfcSyncLoading[device.id] ? '...' : '同步'"></button>
+                                        <button class="btn btn-secondary" @click="editNfcDevice(device)">编辑</button>
+                                        <button class="btn btn-danger" @click="deleteNfcDevice(device)">删除</button>
+                                    </div>
+                                </div>
+                            </template>
+                            <div class="empty-state nfc-empty-state" x-show="nfcDevices.length === 0 && !nfcDeviceForm">还没有 NFC 读写器</div>
+                        </div>
+                        <template x-if="nfcDeviceForm">
+                            <div class="led-inline-form nfc-device-form">
+                                <div class="nfc-form-head">
+                                    <div>
+                                        <strong x-text="nfcDeviceForm.id ? '编辑读写器' : '新增读写器'"></strong>
+                                        <small>ESP32 访问 Token 留空时会保持原配置。</small>
+                                    </div>
+                                </div>
+                                <div class="nfc-form-grid">
+                                    <label class="nfc-form-wide">共用 LED 单片机<select x-model="nfcDeviceForm.linked_led_device_id" @change="applyLinkedLedDeviceToNfcForm()"><option value="">不关联 LED 设备</option><template x-for="device in ledDevices" :key="device.id"><option :value="device.id" x-text="`${device.name} · ${device.host}:${device.port}`"></option></template></select></label>
+                                    <label>名称<input x-model="nfcDeviceForm.name" placeholder="nfc-reader-1"></label>
+                                    <label>地址<input x-model="nfcDeviceForm.host" placeholder="192.168.1.120"></label>
+                                    <label>端口<input type="number" min="1" max="65535" x-model.number="nfcDeviceForm.port"></label>
+                                    <label>模块<select x-model="nfcDeviceForm.module_type"><option value="PN532">PN532</option><option value="RC522">RC522</option></select></label>
+                                    <label class="nfc-form-wide">ESP32 访问 Token<input x-model="nfcDeviceForm.device_token" placeholder="留空则保持原 Token"></label>
+                                    <label class="switch-label nfc-enable-switch"><input type="checkbox" x-model="nfcDeviceForm.enabled"><span>启用此读写器</span></label>
+                                </div>
+                                <div class="nfc-permission-grid">
+                                    <label class="nfc-permission-card">
+                                        <input type="checkbox" x-model="nfcDeviceForm.allow_erase">
+                                        <span>
+                                            <strong>允许擦除标签</strong>
+                                            <small>允许后端清空标签 NDEF 内容，不会解除数据库绑定。</small>
+                                        </span>
+                                    </label>
+                                    <label class="nfc-permission-card danger">
+                                        <input type="checkbox" x-model="nfcDeviceForm.allow_lock">
+                                        <span>
+                                            <strong>允许永久锁定标签</strong>
+                                            <small>写入后可设为只读，通常不可逆，普通使用请勿开启。</small>
+                                        </span>
+                                    </label>
+                                </div>
+                                <div class="toolbar-actions nfc-form-actions">
+                                    <button class="btn btn-primary" @click="saveNfcDevice()">保存读写器</button>
+                                    <button class="btn btn-secondary" @click="cancelNfcDeviceForm()">取消</button>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
                 <div class="settings-tab-panel" x-show="settingsTab === 'led'">

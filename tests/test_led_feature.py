@@ -50,10 +50,10 @@ class FakeLedProxy:
         self.remove_strip_calls.append((device, gpio))
         return {"status": "ok", "removed_gpio": gpio}
 
-    def push_full_config(self, device, strips, http_port=80):
+    def push_full_config(self, device, strips, http_port=80, extra_config=None):
         if device.get("name") in self.fail_names:
             raise InventoryError(f"设备 {device.get('name')} 连接失败")
-        self.push_full_config_calls.append((device, strips, http_port))
+        self.push_full_config_calls.append((device, strips, http_port, extra_config or {}))
         return {"status": "ok", "strips": strips}
 
 
@@ -272,6 +272,26 @@ def test_sync_device_strips_sends_full_config(repo, file_logger):
     strips = proxy.push_full_config_calls[0][1]
     assert {"gpio": 8, "led_count": 30} in strips
     assert {"gpio": 6, "led_count": 20} in strips
+
+
+def test_sync_device_strips_includes_linked_nfc_config(repo, file_logger):
+    device = repo.create_led_device({"name": "combo", "host": "192.168.1.60", "port": 80})
+    repo.create_led_strip({"device_id": device["id"], "name": "a", "gpio_num": 8, "led_count": 30})
+    repo.create_nfc_device(
+        {
+            "name": "combo-nfc",
+            "host": "192.168.1.60",
+            "linked_led_device_id": device["id"],
+            "module_type": "PN532",
+            "allow_erase": True,
+        }
+    )
+    proxy = FakeLedProxy()
+    result = LedService(repo, file_logger, proxy).sync_device_strips(device["id"])
+    assert result["synced_strips"] == 1
+    extra_config = proxy.push_full_config_calls[0][3]
+    assert extra_config["nfc"]["device_name"] == "combo-nfc"
+    assert extra_config["nfc"]["operation"]["allow_erase"] is True
 
 
 def test_sync_device_strips_reports_esp32_error(repo, file_logger):

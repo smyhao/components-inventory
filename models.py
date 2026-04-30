@@ -109,6 +109,7 @@ class InventoryRepository:
         from repositories.stock_repo import StockRepository
         from repositories.document_repo import DocumentRepository
         from repositories.nfc_repo import NfcRepository
+        from repositories.nfc_device_repository import NfcDeviceRepository
         from repositories.led_repository import LedRepository
 
         self._token_repo = TokenRepository(db_path, file_logger)
@@ -119,6 +120,7 @@ class InventoryRepository:
         self._stock_repo = StockRepository(db_path, file_logger)
         self._document_repo = DocumentRepository(db_path, file_logger, upload_folder)
         self._nfc_repo = NfcRepository(db_path, file_logger, self._box_repo)
+        self._nfc_device_repo = NfcDeviceRepository(db_path, file_logger)
         self._led_repo = LedRepository(db_path, file_logger)
 
     # --- Token ---
@@ -267,6 +269,39 @@ class InventoryRepository:
 
     def lookup_nfc(self, uid: str) -> dict[str, Any]:
         return self._nfc_repo.lookup_nfc(uid)
+
+    def lookup_nfc_summary(self, uid: str) -> dict[str, Any]:
+        return self._nfc_repo.lookup_nfc_summary(uid)
+
+    def get_nfc_config(self) -> dict[str, Any]:
+        return self._nfc_device_repo.get_nfc_config()
+
+    def update_nfc_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._nfc_device_repo.update_nfc_config(payload)
+
+    def list_nfc_devices(self) -> list[dict[str, Any]]:
+        return self._nfc_device_repo.list_nfc_devices()
+
+    def get_nfc_device(self, device_id: int) -> dict[str, Any] | None:
+        return self._nfc_device_repo.get_nfc_device(device_id)
+
+    def create_nfc_device(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._nfc_device_repo.create_nfc_device(payload)
+
+    def update_nfc_device(self, device_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._nfc_device_repo.update_nfc_device(device_id, payload)
+
+    def delete_nfc_device(self, device_id: int) -> None:
+        self._nfc_device_repo.delete_nfc_device(device_id)
+
+    def mark_nfc_device_tested(self, device_id: int) -> None:
+        self._nfc_device_repo.mark_nfc_device_tested(device_id)
+
+    def find_nfc_device_for_led_device(self, led_device_id: int) -> dict[str, Any] | None:
+        return self._nfc_device_repo.find_nfc_device_for_led_device(led_device_id)
+
+    def find_nfc_devices_by_endpoint(self, host: str, port: int) -> list[dict[str, Any]]:
+        return self._nfc_device_repo.find_nfc_devices_by_endpoint(host, port)
 
     # --- LED ---
     def get_led_config(self) -> dict[str, Any]:
