@@ -18,6 +18,7 @@ def register_blueprints(app: Flask) -> None:
     from routes.bom import bom_bp
     from routes.auth import auth_bp
     from routes.led import led_bp
+    from routes.model_appearance import model_appearance_bp
 
     app.register_blueprint(pages_bp)
     app.register_blueprint(categories_bp)
@@ -31,3 +32,4 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(bom_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(led_bp)
+    app.register_blueprint(model_appearance_bp)

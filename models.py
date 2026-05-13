@@ -111,6 +111,7 @@ class InventoryRepository:
         from repositories.nfc_repo import NfcRepository
         from repositories.nfc_device_repository import NfcDeviceRepository
         from repositories.led_repository import LedRepository
+        from repositories.model_appearance_repo import ModelAppearanceRepository
 
         self._token_repo = TokenRepository(db_path, file_logger)
         self._category_repo = CategoryRepository(db_path, file_logger)
@@ -122,6 +123,7 @@ class InventoryRepository:
         self._nfc_repo = NfcRepository(db_path, file_logger, self._box_repo)
         self._nfc_device_repo = NfcDeviceRepository(db_path, file_logger)
         self._led_repo = LedRepository(db_path, file_logger)
+        self._model_appearance_repo = ModelAppearanceRepository(db_path, file_logger, upload_folder)
 
     # --- Token ---
     def has_api_tokens(self) -> bool:
@@ -167,6 +169,43 @@ class InventoryRepository:
 
     def update_cabinet_layout(self, cabinet_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         return self._cabinet_repo.update_cabinet_layout(cabinet_id, payload)
+
+    # --- 3D appearance model library ---
+    def list_model_assets(self) -> list[dict[str, Any]]:
+        return self._model_appearance_repo.list_model_assets()
+
+    def create_model_asset_from_upload(self, file: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._model_appearance_repo.create_model_asset_from_upload(file, payload)
+
+    def update_model_asset(self, asset_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._model_appearance_repo.update_model_asset(asset_id, payload)
+
+    def delete_model_asset(self, asset_id: int) -> None:
+        self._model_appearance_repo.delete_model_asset(asset_id)
+
+    def list_cabinet_templates(self) -> list[dict[str, Any]]:
+        return self._model_appearance_repo.list_cabinet_templates()
+
+    def create_cabinet_template(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._model_appearance_repo.create_cabinet_template(payload)
+
+    def update_cabinet_template(self, template_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._model_appearance_repo.update_cabinet_template(template_id, payload)
+
+    def delete_cabinet_template(self, template_id: int) -> None:
+        self._model_appearance_repo.delete_cabinet_template(template_id)
+
+    def list_box_templates(self) -> list[dict[str, Any]]:
+        return self._model_appearance_repo.list_box_templates()
+
+    def create_box_template(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._model_appearance_repo.create_box_template(payload)
+
+    def update_box_template(self, template_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._model_appearance_repo.update_box_template(template_id, payload)
+
+    def delete_box_template(self, template_id: int) -> None:
+        self._model_appearance_repo.delete_box_template(template_id)
 
     # --- Box ---
     def list_boxes(self) -> list[dict[str, Any]]:
@@ -216,7 +255,8 @@ class InventoryRepository:
         return self._component_repo.get_stats()
 
     def get_map_data(self) -> dict[str, Any]:
-        return self._component_repo.get_map_data()
+        # 3D 外观模板属于柜子/收纳盒本体属性，地图直接复用对应仓储可避免旧地图查询遗漏模板信息。
+        return {"boxes": self._box_repo.list_boxes(), "cabinets": self._cabinet_repo.list_cabinets()}
 
     def search_map(self, keyword: str) -> list[dict[str, Any]]:
         return self._component_repo.search_map(keyword)

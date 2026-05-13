@@ -125,7 +125,177 @@
             legHeight: legHeight
         };
 
+        if (cabinetData.template && cabinetData.template.layer_model_asset && modules._3DModels) {
+            // 自定义 GLB 只改变外观；先返回默认模型作为兜底，异步加载成功后再替换可视子树。
+            applyTemplateModel(group, cabinetData, drawerMap);
+        }
         return group;
+    }
+
+    async function applyTemplateModel(group, cabinetData, drawerMap) {
+        var THREE = global.THREE;
+        var loader = modules._3DModels;
+        var template = cabinetData.template || {};
+        var layerAsset = template.layer_model_asset;
+        var layerHeight = Math.max(0.02, Number(template.layer_height_mm || 80) * 0.001);
+        var layers = Math.max(1, Number(cabinetData.layer_count || 1));
+        var boxes = (cabinetData.boxes || []).slice().sort(function sortBySlot(left, right) {
+            return Number(left.cabinet_slot || 0) - Number(right.cabinet_slot || 0);
+        });
+        var boxBySlot = {};
+        var built = new THREE.Group();
+        var customDrawerMap = {};
+        var i;
+
+        boxes.forEach(function rememberBox(box) {
+            boxBySlot[Number(box.cabinet_slot || 0)] = box;
+        });
+
+        try {
+            await addOptionalAsset(built, template.base_model_asset, 0);
+            for (i = 0; i < layers; i += 1) {
+                await addLayerAsset(built, layerAsset, cabinetData, template, customDrawerMap, boxBySlot[i + 1] || null, i, layerHeight);
+            }
+            await addOptionalAsset(built, template.top_model_asset, layers * layerHeight);
+            if (typeof loader.alignToGround === 'function') {
+                loader.alignToGround(built);
+            }
+            while (group.children.length) group.remove(group.children[0]);
+            Object.keys(drawerMap || {}).forEach(function clearOldDrawer(key) {
+                if (key.indexOf(cabinetData.id + '-') === 0) delete drawerMap[key];
+            });
+            Object.assign(drawerMap, customDrawerMap);
+            group.add(built);
+            group.userData.bodyHeight = layers * layerHeight;
+            if (modules._3D.addCabinetNameplate) {
+                modules._3D.addCabinetNameplate(group, cabinetData);
+            }
+            if (modules._3D.addDrawerNameplate) {
+                group.traverse(function addDrawerLabel(child) {
+                    if (child.userData && child.userData.type === 'drawer') {
+                        modules._3D.addDrawerNameplate(child, child.userData.boxData);
+                    }
+                });
+            }
+        } catch (err) {
+            // 模型库加载失败时保持默认参数化柜体，避免 3D 地图因为单个 GLB 问题整体不可用。
+        }
+    }
+
+    async function addOptionalAsset(parent, asset, y) {
+        var loader = modules._3DModels;
+        var loaded;
+        var object;
+
+        if (!asset || !asset.url) return;
+        loaded = await loader.loadGlb(asset.url);
+        object = loaded.scene;
+        loader.scaleToDimensions(object, asset.width_mm, asset.height_mm, asset.depth_mm);
+        loader.normalizeToBaseCenter(object);
+        object.position.y = y || 0;
+        parent.add(object);
+    }
+
+    async function addLayerAsset(parent, asset, cabinetData, template, drawerMap, boxData, index, layerHeight) {
+        var THREE = global.THREE;
+        var loader = modules._3DModels;
+        var loaded = await loader.loadGlb(asset.url);
+        var layer = loaded.scene;
+        var drawerPart = loader.findNode(layer, 'DRAWER_PART');
+        var slotAnchor = loader.findNode(layer, 'BOX_SLOT_ANCHOR');
+        var nameplateAnchor = loader.findNode(layer, 'NAMEPLATE_ANCHOR');
+        var closedAnchor = loader.findNode(layer, 'DRAWER_CLOSED_ANCHOR');
+        var openAnchor = loader.findNode(layer, 'DRAWER_OPEN_ANCHOR');
+        var drawerKey = cabinetData.id + '-' + index;
+        var cellMesh;
+        var anchorWorld;
+        var closedLocal;
+        var openLocal;
+        var closedWorld;
+        var openWorld;
+        var drawerWorldQuat;
+        var pullVector;
+        var nameplateNormal;
+
+        loader.scaleToDimensions(layer, asset.width_mm, template.layer_height_mm || asset.height_mm, asset.depth_mm);
+        loader.normalizeToBaseCenter(layer);
+        layer.position.y = index * layerHeight;
+
+        if (drawerPart && template.structure_type === 'drawer_cabinet') {
+            layer.updateMatrixWorld(true);
+            if (nameplateAnchor) {
+                anchorWorld = new THREE.Vector3();
+                nameplateAnchor.getWorldPosition(anchorWorld);
+                drawerPart.userData.nameplatePosition = drawerPart.worldToLocal(anchorWorld.clone());
+            }
+            if (closedAnchor && openAnchor && drawerPart.parent) {
+                closedLocal = new THREE.Vector3();
+                openLocal = new THREE.Vector3();
+                closedWorld = new THREE.Vector3();
+                openWorld = new THREE.Vector3();
+                closedAnchor.getWorldPosition(closedWorld);
+                openAnchor.getWorldPosition(openWorld);
+                closedLocal = drawerPart.parent.worldToLocal(closedWorld.clone());
+                openLocal = drawerPart.parent.worldToLocal(openWorld.clone());
+                pullVector = openLocal.sub(closedLocal);
+                if (openWorld.distanceToSquared(closedWorld) > 0.000001) {
+                    drawerWorldQuat = new THREE.Quaternion();
+                    drawerPart.getWorldQuaternion(drawerWorldQuat);
+                    // 铭牌朝向跟随抽拉方向，而不是依赖 SolidWorks 导出节点的局部旋转。
+                    nameplateNormal = openWorld.clone().sub(closedWorld).normalize().applyQuaternion(drawerWorldQuat.invert());
+                }
+            }
+            drawerPart.userData = Object.assign({}, drawerPart.userData || {}, {
+                type: 'drawer',
+                cabinetId: cabinetData.id,
+                slotIndex: index,
+                boxId: boxData ? boxData.id : null,
+                open: false,
+                targetZ: 0,
+                boxData: boxData,
+                customModel: true,
+                // GLB 锚点是模型作者给出的真实运动语义；模板方向只在锚点缺失时兜底。
+                pullVector: pullVector || null,
+                nameplateNormal: nameplateNormal || null,
+                closedPosition: drawerPart.position.clone(),
+                pullAxis: template.pull_axis || 'z',
+                pullDistance: Number(template.pull_distance_mm || 160) * 0.001
+            });
+            loader.markSubtree(drawerPart, {
+                type: 'handle',
+                cabinetId: cabinetData.id,
+                slotIndex: index,
+                boxId: boxData ? boxData.id : null
+            });
+            drawerPart.userData.type = 'drawer';
+            drawerMap[drawerKey] = drawerPart;
+        }
+
+        if (boxData && modules._3D.buildDrawerCells) {
+            cellMesh = modules._3D.buildDrawerCells(boxData, 0.52, 0.34);
+            if (cellMesh) {
+                if (slotAnchor) {
+                    layer.updateMatrixWorld(true);
+                    anchorWorld = new THREE.Vector3();
+                    slotAnchor.getWorldPosition(anchorWorld);
+                    if (drawerPart && template.structure_type === 'drawer_cabinet') {
+                        cellMesh.position.copy(drawerPart.worldToLocal(anchorWorld));
+                    } else {
+                        cellMesh.position.copy(layer.worldToLocal(anchorWorld));
+                    }
+                } else {
+                    cellMesh.position.set(
+                        Number(template.slot_offset_x_mm || 0) * 0.001,
+                        Number(template.slot_offset_y_mm || 0) * 0.001 + 0.02,
+                        Number(template.slot_offset_z_mm || 0) * 0.001
+                    );
+                }
+                if (drawerPart && template.structure_type === 'drawer_cabinet') drawerPart.add(cellMesh);
+                else layer.add(cellMesh);
+            }
+        }
+
+        parent.add(layer);
     }
 
     /** 添加柜子底部柜腿和前横梁，让柜体铭牌有实体承载面而不是悬浮在空间中。 */

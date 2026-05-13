@@ -24,6 +24,8 @@
         this._boundPointerMove = null;
         this._boundPointerUp = null;
         this._boundPointerCancel = null;
+        this._boundWheel = null;
+        this._boundControlStart = null;
         this._boundSuppressBrowserGesture = null;
     }
 
@@ -38,6 +40,8 @@
         this._boundPointerMove = this.onPointerMove.bind(this);
         this._boundPointerUp = this.onPointerUp.bind(this);
         this._boundPointerCancel = this.onPointerCancel.bind(this);
+        this._boundWheel = this.cancelCameraFly.bind(this);
+        this._boundControlStart = this.cancelCameraFly.bind(this);
         this._boundSuppressBrowserGesture = this.suppressBrowserGesture.bind(this);
 
         canvas.addEventListener('pointerdown', this._boundPointerDown, true);
@@ -45,8 +49,12 @@
         canvas.addEventListener('pointerup', this._boundPointerUp);
         canvas.addEventListener('pointercancel', this._boundPointerCancel);
         canvas.addEventListener('pointerleave', this._boundPointerCancel);
+        canvas.addEventListener('wheel', this._boundWheel, true);
         canvas.addEventListener('contextmenu', this._boundSuppressBrowserGesture);
         canvas.addEventListener('auxclick', this._boundSuppressBrowserGesture);
+        if (this.sm && this.sm.controls && typeof this.sm.controls.addEventListener === 'function') {
+            this.sm.controls.addEventListener('start', this._boundControlStart);
+        }
     };
 
     /** 解绑事件，并恢复悬停与拖拽状态，供场景销毁时清理。 */
@@ -60,8 +68,12 @@
         canvas.removeEventListener('pointerup', this._boundPointerUp);
         canvas.removeEventListener('pointercancel', this._boundPointerCancel);
         canvas.removeEventListener('pointerleave', this._boundPointerCancel);
+        if (this._boundWheel) canvas.removeEventListener('wheel', this._boundWheel, true);
         canvas.removeEventListener('contextmenu', this._boundSuppressBrowserGesture);
         canvas.removeEventListener('auxclick', this._boundSuppressBrowserGesture);
+        if (this.sm && this.sm.controls && this._boundControlStart && typeof this.sm.controls.removeEventListener === 'function') {
+            this.sm.controls.removeEventListener('start', this._boundControlStart);
+        }
         this.restoreHoveredHandle();
         this.restoreHoveredCell();
         this.resetCursor();
@@ -69,6 +81,8 @@
         this._boundPointerMove = null;
         this._boundPointerUp = null;
         this._boundPointerCancel = null;
+        this._boundWheel = null;
+        this._boundControlStart = null;
         this._boundSuppressBrowserGesture = null;
         this.pointerDown = null;
         this.dragState = null;
@@ -82,10 +96,15 @@
         var draggable;
 
         if (this.isSecondaryAction(event)) {
-            event.preventDefault();
-            event.stopPropagation();
-            this.pointerDown = null;
-            this.focusNextOpenDrawerTopView();
+            this.cancelCameraFly();
+            this.pointerDown = {
+                x: event.clientX,
+                y: event.clientY,
+                hit: hit,
+                moved: false,
+                dragStarted: false,
+                secondary: true
+            };
             return;
         }
 
@@ -93,9 +112,11 @@
             // 右键/中键交给 OrbitControls，但阻止浏览器手势菜单和中键自动滚动。
             event.preventDefault();
             this.pointerDown = null;
+            this.cancelCameraFly();
             return;
         }
 
+        this.cancelCameraFly();
         this.pointerDown = {
             x: event.clientX,
             y: event.clientY,
@@ -104,7 +125,7 @@
             dragStarted: false
         };
 
-        if (type === 'handle' || type === 'box-cells') {
+        if (type === 'handle' || type === 'box-cells' || type === 'box-cell') {
             event.preventDefault();
             return;
         }
@@ -129,7 +150,7 @@
         return event.button === 0;
     };
 
-    /** 鼠标右键用于在已打开抽屉之间轮换俯视图，而不是浏览器菜单或 OrbitControls 平移。 */
+    /** 鼠标右键单击用于轮换抽屉俯视图；右键拖动仍交给 OrbitControls 调整视角。 */
     InteractionManager.prototype.isSecondaryAction = function isSecondaryAction(event) {
         return !!(event && event.pointerType === 'mouse' && event.button === 2);
     };
@@ -141,6 +162,12 @@
         }
     };
 
+    InteractionManager.prototype.cancelCameraFly = function cancelCameraFly() {
+        if (modules._3D && typeof modules._3D.cancelFly === 'function') {
+            modules._3D.cancelFly();
+        }
+    };
+
     /** 布局锁定时仅禁止位置拖拽，不影响抽屉开关、格子点击和相机控制。 */
     InteractionManager.prototype.isLayoutLocked = function isLayoutLocked() {
         return !!(this.ctx && this.ctx.mapLayoutLocked);
@@ -148,7 +175,7 @@
 
     /** 拖拽时更新位置；非拖拽时更新悬停反馈。 */
     InteractionManager.prototype.onPointerMove = function onPointerMove(event) {
-        if (event && event.pointerType === 'mouse' && event.buttons && (event.buttons & 1) === 0 && this.pointerDown && !this.dragState) {
+        if (event && event.pointerType === 'mouse' && event.buttons && (event.buttons & 1) === 0 && this.pointerDown && !this.pointerDown.secondary && !this.dragState) {
             this.pointerDown = null;
         }
 
@@ -156,6 +183,10 @@
             var dx = event.clientX - this.pointerDown.x;
             var dy = event.clientY - this.pointerDown.y;
             this.pointerDown.moved = Math.sqrt(dx * dx + dy * dy) > 5;
+            if (this.pointerDown.secondary && this.pointerDown.moved) {
+                // 右键拖动代表用户正在接管相机，必须中断自动飞入，避免下一帧把视角拉回柜内。
+                this.cancelCameraFly();
+            }
         }
 
         if (this.dragState) {
@@ -175,6 +206,11 @@
         var drawer;
 
         if (!this.isPrimaryAction(event)) {
+            if (this.isSecondaryAction(event) && down && down.secondary && !down.moved) {
+                event.preventDefault();
+                this.focusNextOpenDrawerTopView();
+            }
+            if (down && down.secondary) this.pointerDown = null;
             return;
         }
 
@@ -196,7 +232,7 @@
         if (clickedObject && clickedObject.userData.type === 'handle') {
             drawer = this.findDrawerByHandle(clickedObject.userData);
             if (drawer) this.toggleDrawer(drawer);
-        } else if (clickedObject && clickedObject.userData.type === 'box-cells') {
+        } else if (clickedObject && (clickedObject.userData.type === 'box-cells' || clickedObject.userData.type === 'box-cell')) {
             this.openCellComponent(clickedObject, hit.instanceId);
         }
 
@@ -238,7 +274,8 @@
             if (this.isVisualLabel(intersections[i].object)) continue;
             if (intersections[i].object && intersections[i].object.userData && (
                 intersections[i].object.userData.type === 'handle' ||
-                intersections[i].object.userData.type === 'box-cells'
+                intersections[i].object.userData.type === 'box-cells' ||
+                intersections[i].object.userData.type === 'box-cell'
             )) {
                 return intersections[i];
             }
@@ -291,7 +328,8 @@
         });
 
         drawerGroup.userData.open = true;
-        drawerGroup.userData.targetZ = constants.PULL_OUT_DISTANCE || 0.7;
+        drawerGroup.userData.targetProgress = 1;
+        drawerGroup.userData.targetDistance = drawerGroup.userData.pullVector ? 0 : (drawerGroup.userData.pullDistance || constants.PULL_OUT_DISTANCE || 0.7);
 
         if (!boxId || !this.ctx || typeof this.ctx.loadBoxGrid !== 'function') return;
 
@@ -312,6 +350,8 @@
         if (!drawerGroup) return;
         drawerGroup.userData.open = false;
         drawerGroup.userData.targetZ = 0;
+        drawerGroup.userData.targetDistance = 0;
+        drawerGroup.userData.targetProgress = 0;
         this.callOptionalLabelHook('clearCellLabels', drawerGroup);
     };
 
@@ -394,14 +434,42 @@
             var drawer = self.sm.drawerMap[key];
             var target;
             var diff;
+            var axis;
+            var sign;
+            var base;
+            var vector;
+            var progress;
+            var targetPosition;
 
             if (!drawer) return;
-            target = drawer.userData.targetZ || 0;
-            diff = target - drawer.position.z;
+            vector = drawer.userData.pullVector;
+            if (vector) {
+                base = drawer.userData.closedPosition || { x: 0, y: 0, z: 0 };
+                progress = drawer.userData.targetProgress || 0;
+                targetPosition = {
+                    x: base.x + vector.x * progress,
+                    y: base.y + vector.y * progress,
+                    z: base.z + vector.z * progress
+                };
+                drawer.position.x += (targetPosition.x - drawer.position.x) * 0.12;
+                drawer.position.y += (targetPosition.y - drawer.position.y) * 0.12;
+                drawer.position.z += (targetPosition.z - drawer.position.z) * 0.12;
+                if (Math.abs(targetPosition.x - drawer.position.x) < 0.001) drawer.position.x = targetPosition.x;
+                if (Math.abs(targetPosition.y - drawer.position.y) < 0.001) drawer.position.y = targetPosition.y;
+                if (Math.abs(targetPosition.z - drawer.position.z) < 0.001) drawer.position.z = targetPosition.z;
+                return;
+            }
+            target = drawer.userData.targetDistance;
+            if (target === undefined) target = drawer.userData.targetZ || 0;
+            axis = String(drawer.userData.pullAxis || 'z');
+            sign = axis.charAt(0) === '-' ? -1 : 1;
+            axis = axis.replace('-', '') || 'z';
+            target *= sign;
+            diff = target - drawer.position[axis];
             if (Math.abs(diff) > 0.001) {
-                drawer.position.z += diff * 0.12;
+                drawer.position[axis] += diff * 0.12;
             } else {
-                drawer.position.z = target;
+                drawer.position[axis] = target;
             }
         });
     };
@@ -518,11 +586,11 @@
         var cursor = '';
 
         this.updateHandleHover(object && object.userData.type === 'handle' ? object : null);
-        this.updateCellHover(object && object.userData.type === 'box-cells' ? object : null, hit ? hit.instanceId : null);
+        this.updateCellHover(object && (object.userData.type === 'box-cells' || object.userData.type === 'box-cell') ? object : null, hit ? hit.instanceId : null);
 
         if (object && object.userData.type === 'handle') {
             cursor = 'pointer';
-        } else if (object && object.userData.type === 'box-cells') {
+        } else if (object && (object.userData.type === 'box-cells' || object.userData.type === 'box-cell')) {
             cursor = 'pointer';
         } else if (!this.isLayoutLocked() && (this.findParentByType(object, 'cabinet') || this.findParentByType(object, 'standalone-box'))) {
             cursor = 'grab';
@@ -550,8 +618,8 @@
     InteractionManager.prototype.openCellComponent = async function openCellComponent(cellMesh, instanceId) {
         var data = cellMesh.userData || {};
         var cols = Math.max(1, Number(data.cols || 1));
-        var row = Math.floor(Number(instanceId || 0) / cols);
-        var col = Number(instanceId || 0) % cols;
+        var row = data.type === 'box-cell' ? Number(data.gridRow || 0) : Math.floor(Number(instanceId || 0) / cols);
+        var col = data.type === 'box-cell' ? Number(data.gridCol || 0) : Number(instanceId || 0) % cols;
         var gridData;
         var cell;
         var component;

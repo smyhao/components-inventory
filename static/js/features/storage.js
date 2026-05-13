@@ -13,6 +13,7 @@
             rows: 4,
             cols: 6,
             color: '#84b59b',
+            template_id: '',
             cabinet_id: '',
             cabinet_slot: 0,
             description: ''
@@ -31,6 +32,7 @@
             rows: box.rows || 4,
             cols: box.cols || 6,
             color: box.color || '#84b59b',
+            template_id: box.template_id || '',
             cabinet_id: box.cabinet_id || '',
             cabinet_slot: box.cabinet_slot || 0,
             description: box.description || ''
@@ -46,6 +48,8 @@
             id: null,
             name: '',
             color: '#8b9aae',
+            template_id: '',
+            layer_count: 1,
             description: ''
         };
     }
@@ -75,6 +79,8 @@
             id: cabinet.id,
             name: cabinet.name || '',
             color: cabinet.color || '#8b9aae',
+            template_id: cabinet.template_id || '',
+            layer_count: cabinet.layer_count || 1,
             description: cabinet.description || ''
         } : emptyCabinetForm();
     }
@@ -117,6 +123,7 @@
 
                 openBoxForm(box = null) {
                     this.boxForm = boxToForm(box);
+                    if (typeof this.load3DAppearance === 'function') this.load3DAppearance();
                     this.modal = 'box-form';
                 },
 
@@ -125,7 +132,7 @@
                 },
 
                 async saveBox() {
-                    const { id, name, rows, cols, color, cabinet_id, cabinet_slot, description } = this.boxForm;
+                    const { id, name, rows, cols, color, template_id, cabinet_id, cabinet_slot, description } = this.boxForm;
                     if (!String(name || '').trim()) {
                         this.toast('请填写收纳盒名称', 'warning');
                         return;
@@ -137,6 +144,7 @@
                             rows: Number(rows),
                             cols: Number(cols),
                             color,
+                            template_id: template_id ? Number(template_id) : null,
                             cabinet_id: cabinet_id ? Number(cabinet_id) : null,
                             cabinet_slot: Number(cabinet_slot || 0),
                             description: description || null
@@ -184,18 +192,25 @@
 
                 openCabinetForm(cabinet = null) {
                     this.cabinetForm = cabinetToForm(cabinet);
+                    if (typeof this.load3DAppearance === 'function') this.load3DAppearance();
                     this.modal = 'cabinet-form';
                 },
 
                 async saveCabinet() {
-                    const { id, name, color, description } = this.cabinetForm;
+                    const { id, name, color, template_id, layer_count, description } = this.cabinetForm;
                     if (!String(name || '').trim()) {
                         this.toast('请填写柜子名称', 'warning');
                         return;
                     }
                     try {
                         this.loadingOverlay = true;
-                        const payload = { name: name.trim(), color, description: description || null };
+                        const payload = {
+                            name: name.trim(),
+                            color,
+                            template_id: template_id ? Number(template_id) : null,
+                            layer_count: Number(layer_count || 1),
+                            description: description || null
+                        };
                         if (id) {
                             await api.put(`/api/cabinets/${id}`, payload);
                             this.toast('柜子已更新', 'success');

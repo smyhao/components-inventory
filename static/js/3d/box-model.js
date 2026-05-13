@@ -67,7 +67,104 @@
             data: boxData
         };
 
+        if (boxData.template && modules._3DModels) {
+            // 自定义收纳盒模型加载失败时保留默认托盘和格子，保证地图基础交互不受模型质量影响。
+            applyBoxTemplate(group, boxData);
+        }
         return group;
+    }
+
+    async function applyBoxTemplate(group, boxData) {
+        var THREE = global.THREE;
+        var loader = modules._3DModels;
+        var template = boxData.template || {};
+        var built = new THREE.Group();
+        var frame;
+        var cells;
+
+        try {
+            if (template.frame_model_asset && template.frame_model_asset.url) {
+                frame = (await loader.loadGlb(template.frame_model_asset.url)).scene;
+                loader.scaleToDimensions(
+                    frame,
+                    template.frame_model_asset.width_mm,
+                    template.frame_model_asset.height_mm,
+                    template.frame_model_asset.depth_mm
+                );
+                loader.normalizeToBaseCenter(frame);
+                built.add(frame);
+            }
+            if (template.cell_model_asset && template.cell_model_asset.url) {
+                cells = await buildTemplateCellClones(boxData, template);
+                built.add(cells);
+            } else {
+                cells = buildCellGrid({
+                    boxData: boxData,
+                    rows: Math.max(1, Number(boxData.rows || 1)),
+                    cols: Math.max(1, Number(boxData.cols || 1)),
+                    width: Math.max(0.1, (Number(template.cell_width_mm || 28) * Number(boxData.cols || 1) + Number(template.gap_x_mm || 2) * Math.max(0, Number(boxData.cols || 1) - 1)) * 0.001),
+                    depth: Math.max(0.1, (Number(template.cell_depth_mm || 28) * Number(boxData.rows || 1) + Number(template.gap_z_mm || 2) * Math.max(0, Number(boxData.rows || 1) - 1)) * 0.001),
+                    y: Number(template.cell_height_mm || 12) * 0.0005,
+                    padding: 0.002,
+                    cellHeight: Number(template.cell_height_mm || 12) * 0.001,
+                    meta: {}
+                });
+                if (cells) built.add(cells);
+            }
+            if (typeof loader.alignToGround === 'function') {
+                loader.alignToGround(built);
+            }
+            while (group.children.length) group.remove(group.children[0]);
+            group.add(built);
+        } catch (err) {
+            // 保持默认模型兜底。
+        }
+    }
+
+    async function buildTemplateCellClones(boxData, template) {
+        var THREE = global.THREE;
+        var loader = modules._3DModels;
+        var rows = Math.max(1, Number(boxData.rows || 1));
+        var cols = Math.max(1, Number(boxData.cols || 1));
+        var cellAsset = template.cell_model_asset;
+        var loaded = await loader.loadGlb(cellAsset.url);
+        var root = new THREE.Group();
+        var cellWidth = Number(template.cell_width_mm || cellAsset.width_mm || 28) * 0.001;
+        var cellDepth = Number(template.cell_depth_mm || cellAsset.depth_mm || 28) * 0.001;
+        var gapX = Number(template.gap_x_mm || 0) * 0.001;
+        var gapZ = Number(template.gap_z_mm || 0) * 0.001;
+        var paddingX = Number(template.padding_x_mm || 0) * 0.001;
+        var paddingZ = Number(template.padding_z_mm || 0) * 0.001;
+        var totalWidth = cols * cellWidth + Math.max(0, cols - 1) * gapX + paddingX * 2;
+        var totalDepth = rows * cellDepth + Math.max(0, rows - 1) * gapZ + paddingZ * 2;
+        var row;
+        var col;
+        var index = 0;
+
+        loader.scaleToDimensions(loaded.scene, cellAsset.width_mm || template.cell_width_mm, cellAsset.height_mm || template.cell_height_mm, cellAsset.depth_mm || template.cell_depth_mm);
+        loader.normalizeToBaseCenter(loaded.scene);
+        for (row = 0; row < rows; row += 1) {
+            for (col = 0; col < cols; col += 1) {
+                var cell = loaded.scene.clone(true);
+                cell.position.set(
+                    -totalWidth / 2 + paddingX + cellWidth / 2 + col * (cellWidth + gapX),
+                    0,
+                    -totalDepth / 2 + paddingZ + cellDepth / 2 + row * (cellDepth + gapZ)
+                );
+                loader.markSubtree(cell, {
+                    type: 'box-cell',
+                    boxId: boxData.id,
+                    rows: rows,
+                    cols: cols,
+                    gridRow: row,
+                    gridCol: col,
+                    instanceIndex: index
+                });
+                root.add(cell);
+                index += 1;
+            }
+        }
+        return root;
     }
 
     /**

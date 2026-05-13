@@ -15,7 +15,7 @@
 │  前端 (static/)                                       │
 │  index.html / box.html / js / css / vendor            │
 │  2D 地图层 (features/map-workbench.js)                 │
-│  3D 引擎层 (js/3d/)                                   │
+│  3D 引擎层 (js/3d/) + GLB 模型外观配置                 │
 │  scene-manager / models / interaction / labels / ...  │
 └───────────────────────┬──────────────────────────────┘
                         │ HTTP / REST API
@@ -23,6 +23,7 @@
 │  路由层 (routes/)          — Flask 蓝图，请求解析       │
 │  pages / categories / cabinets / boxes / components   │
 │  stock_operations / tags / nfc / map / bom / auth / led│
+│  model_appearance                                     │
 └───────────────────────┬──────────────────────────────┘
                         │
 ┌───────────────────────▼──────────────────────────────┐
@@ -38,7 +39,8 @@
                         │
 ┌───────────────────────▼──────────────────────────────┐
 │  仓储层 (repositories/)    — 原生 SQL 数据访问         │
-│  component_repo / box_repo / stock_repo / led_repo / ...│
+│  component_repo / box_repo / stock_repo / led_repo    │
+│  model_appearance_repo                                │
 │  _utils (共享 URL/文件/库存日志工具)                    │
 │  base (连接管理、事务、WAL 模式)                        │
 └───────────────────────┬──────────────────────────────┘
@@ -55,7 +57,7 @@
 | models.py | InventoryRepository 外观 | 薄委托，对外接口不变 |
 | repositories/ | SQL 查询、数据读写 | 不包含 HTTP 逻辑 |
 
-3D 地图视图位于前端静态层内，使用 Three.js 构建独立引擎层。`static/js/features/map-3d.js` 只负责 Alpine 状态桥接、2D/3D 切换和 API 调用，`static/js/3d/` 内的 scene/model/interaction/label/highlight/layout 模块负责 Three.js 场景、模型和动画。
+3D 地图视图位于前端静态层内，使用 Three.js 构建独立引擎层。`static/js/features/map-3d.js` 只负责 Alpine 状态桥接、2D/3D 切换和 API 调用，`static/js/features/model-appearance.js` 负责模型资产与模板配置界面，`static/js/3d/` 内的 scene/model/interaction/label/highlight/layout/glb-loader 模块负责 Three.js 场景、模型、动画和 GLB 加载。
 
 ---
 
@@ -64,18 +66,20 @@
 ```
 components-inventory/
 │
-├── app.py                  # Flask 应用入口（~47 行）
+├── app.py                  # Flask 应用入口
 ├── config.py               # 集中配置（路径、端口、分页、颜色）
 ├── init_db.py              # 数据库 Schema 初始化 + 迁移
 ├── logger.py               # 前后端日志系统
-├── models.py               # InventoryRepository 外观（~170 行）
+├── models.py               # InventoryRepository 外观
 ├── inventory_cli.py        # CLI 工具入口
 ├── requirements.txt        # Python 依赖
-├── prompt/                 # 前端重构等协作任务 Prompt
-│   ├── 00-frontend-refactor-shared-rules.md
-│   └── 01-...09-frontend-*.md
+├── prompt/                 # 前端、3D、NFC 等协作任务 Prompt
+│   ├── ui_rebuild/         #   前端模块化重构任务
+│   ├── 3d/                 #   3D 地图实现任务
+│   ├── 3d_user_define/     #   自定义模型外观任务
+│   └── nfc/                #   ESP32-S3 NFC 通信协议任务
 │
-├── routes/                 # 路由层 — 12 个 Flask 蓝图
+├── routes/                 # 路由层 — 13 个 Flask 蓝图
 │   ├── __init__.py         #   register_blueprints()
 │   ├── _utils.py           #   success() / failure() / excel_response()
 │   ├── pages.py            #   前端页面 + QR 标签打印
@@ -89,7 +93,8 @@ components-inventory/
 │   ├── map.py              #   地图数据 + 背景 + 搜索
 │   ├── bom.py              #   BOM 导入/领料/导出
 │   ├── auth.py             #   Token 管理 + 认证中间件 + 前端日志
-│   └── led.py              #   LED 设置、设备测试、定位和清除 API
+│   ├── led.py              #   LED 设置、设备测试、定位和清除 API
+│   └── model_appearance.py #   GLB 模型资产与 3D 外观模板 API
 │
 ├── services/               # 服务层 — 可独立测试的纯函数
 │   ├── __init__.py
@@ -115,7 +120,8 @@ components-inventory/
 │   ├── document_repo.py    #   DocumentRepository（4 方法）
 │   ├── nfc_repo.py         #   NfcRepository（绑定/载荷/查询）
 │   ├── nfc_device_repository.py # NfcDeviceRepository（配置/设备）
-│   └── led_repository.py   #   LedRepository（配置/设备/灯带/映射）
+│   ├── led_repository.py   #   LedRepository（配置/设备/灯带/映射）
+│   └── model_appearance_repo.py # ModelAppearanceRepository（模型资产/模板）
 │
 ├── models.py               # InventoryRepository — 薄外观，委托给子仓储
 │
@@ -143,6 +149,7 @@ components-inventory/
 │           ├── map-3d.js   #   3D 地图 Alpine 功能模块与跨功能桥接
 │           ├── bom.js      #   BOM 导入、匹配、批量选择、领料、导出和地图跳转桥接
 │           ├── automation.js # Token、LED、NFC 与扫码自动化交互
+│           ├── model-appearance.js # GLB 模型资产与模板配置交互
 │           └── box-page.js #   /box/<id> 独立查看页渲染
 │       └── 3d/             #   3D 引擎层
 │           ├── scene-manager.js # 场景初始化、灯光、地面、渲染循环和资源释放
@@ -151,9 +158,11 @@ components-inventory/
 │           ├── interaction.js   # 射线拾取、抽屉动画、格子点击、拖拽保存
 │           ├── labels.js        # CSS2DObject 名称牌、格子标签和 LOD
 │           ├── highlights.js    # BOM 高亮、LED 脉冲、相机飞入、领料序号
+│           ├── glb-loader.js    # GLB 模型加载、缓存与实例化
 │           └── layouts.js       # 3D 预设布局纯函数
 │   └── vendor/             #   前端第三方库
 │       ├── three.module.min.js # Three.js 核心 ES Module
+│       ├── three.core.min.js   # Three.js Core 构建（GLB 加载辅助）
 │       ├── OrbitControls.js    # 轨道相机控制
 │       ├── CSS2DRenderer.js    # CSS2DObject 标签渲染
 │       └── html5-qrcode.min.js # QR 扫描库
@@ -163,6 +172,9 @@ components-inventory/
 │   ├── client.py           #   InventoryClient（基于 urllib）
 │   ├── config.py           #   配置文件管理（多 profile）
 │   └── errors.py           #   错误类定义
+│
+├── scripts/                # 辅助脚本
+│   └── check_glb_model.py  #   GLB 结构检查，供上传接口和测试复用
 │
 ├── tests/                  # pytest 测试套件（持续覆盖 API、服务和仓储）
 │   ├── conftest.py         #   共享 fixtures
@@ -177,6 +189,7 @@ components-inventory/
 │   ├── test_nfc_api.py
 │   ├── test_nfc_device_feature.py
 │   ├── test_map_api.py
+│   ├── test_model_appearance_api.py
 │   ├── test_bom_api.py
 │   ├── test_stats_api.py
 │   └── test_frontend_log_api.py
@@ -213,8 +226,8 @@ ensure_runtime_directories()  →  创建 data/uploads/log 目录
 init_database(DATABASE_PATH)  →  初始化 SQLite（建表+WAL+索引）
 Flask(__name__)               →  创建 Flask 应用
 FileLogger(...)               →  创建日志器
-InventoryRepository(...)      →  创建仓储外观（内含 9 个子仓储）
-register_blueprints(app)      →  注册 11 个蓝图
+InventoryRepository(...)      →  创建仓储外观（内含 11 个子仓储）
+register_blueprints(app)      →  注册 13 个蓝图
 app.run(host, port)           →  启动服务
 ```
 
@@ -242,11 +255,11 @@ app.run(host, port)           →  启动服务
 
 ### 4.3 init_db.py — 数据库初始化
 
-15 张表 + 15 个索引，初始化时自动创建。
+20 张表 + 18 个 Schema 索引，初始化时自动创建；兼容迁移阶段还会补充旧库缺失的列和索引。
 
 创建流程：`PRAGMA journal_mode=WAL` → `PRAGMA busy_timeout=5000` → 建表 → 建索引 → 迁移检查 → 插入默认分类。
 
-如果 `boxes` 表缺少 `color`/`cabinet_id`/`cabinet_slot` 列，会自动 `ALTER TABLE` 添加。
+如果旧库缺少 `boxes.color`/`boxes.cabinet_id`/`boxes.cabinet_slot`/`boxes.template_id`、`cabinets.template_id`/`cabinets.layer_count`、`led_box_mapping.color` 或 `nfc_devices.linked_led_device_id` 等列，会自动 `ALTER TABLE` 添加。
 
 ### 4.4 logger.py — 日志系统
 
@@ -257,7 +270,7 @@ app.run(host, port)           →  启动服务
 
 ### 4.5 models.py — InventoryRepository 外观
 
-薄委托模式：构造时创建 8 个子仓储实例，所有 public 方法直接转发。
+薄委托模式：构造时创建 11 个子仓储实例，所有 public 方法直接转发。
 
 ```
 InventoryRepository
@@ -270,7 +283,8 @@ InventoryRepository
   ├── _document_repo   → DocumentRepository
   ├── _nfc_repo        → NfcRepository
   ├── _nfc_device_repo → NfcDeviceRepository
-  └── _led_repo        → LedRepository
+  ├── _led_repo        → LedRepository
+  └── _model_appearance_repo → ModelAppearanceRepository
 ```
 
 外部调用者（routes、CLI）只与 `InventoryRepository` 交互，不直接引用子仓储。
@@ -288,12 +302,30 @@ categories          分类（电阻、电容、电感…）
 ├── id, name, parent_id, icon, created_at
 
 cabinets            柜子（收纳盒的容器）
-├── id, name, description, color, position_x, position_y, created_at
+├── id, name, description, color, template_id → cabinet_templates
+├── layer_count, position_x, position_y, created_at
 
 boxes               收纳盒（元器件存放单元，支持行列网格）
 ├── id, name, rows, cols, description, color
-├── cabinet_id → cabinets, cabinet_slot, nfc_uid
+├── cabinet_id → cabinets, cabinet_slot, template_id → box_templates, nfc_uid
 ├── position_x, position_y, created_at
+
+model_assets        3D 模型资产（上传的 GLB 文件）
+├── id, name, type, file_path (UNIQUE), original_name, file_size
+├── unit, width_mm, height_mm, depth_mm, node_report_json
+├── created_at, updated_at
+
+cabinet_templates   柜体外观模板
+├── id, name (UNIQUE), structure_type
+├── layer_model_asset_id/base_model_asset_id/top_model_asset_id → model_assets
+├── layer_height_mm, pull_axis, pull_distance_mm
+├── slot_offset_x_mm, slot_offset_y_mm, slot_offset_z_mm
+
+box_templates       收纳盒外观模板
+├── id, name (UNIQUE)
+├── cell_model_asset_id/frame_model_asset_id → model_assets
+├── cell_width_mm, cell_depth_mm, cell_height_mm
+├── gap_x_mm, gap_z_mm, padding_x_mm, padding_z_mm
 
 compartments        格子（收纳盒的行列单元）
 ├── id, box_id → boxes, row, col, label
@@ -358,6 +390,9 @@ nfc_devices         ESP32-S3 NFC 读写器
 
 - `components.compartment_id` 为 `UNIQUE`，一个格子只能放一个元器件
 - `boxes.nfc_uid` 为 `UNIQUE`，一个 NFC 标签只能绑定一个收纳盒
+- `boxes.template_id` 与 `cabinets.template_id` 采用 `ON DELETE SET NULL`，模板删除后不破坏已有业务实体
+- `cabinet_templates` 和 `box_templates` 被业务实体引用时，仓储层会阻止删除，避免 3D 外观配置悬空
+- `model_assets` 被任一模板引用时禁止删除，避免 GLB 文件引用失效
 - `led_box_mapping.box_id` 为 `UNIQUE`，一个收纳盒只能映射一个 LED
 - `led_box_mapping(strip_id, led_index)` 为 `UNIQUE`，同一灯带同一 LED 只能映射一个收纳盒
 - `nfc_devices.linked_led_device_id` 可选关联 LED 设备，用于同一 ESP32 同时承载 LED 与 NFC 时合并配置同步
@@ -393,9 +428,9 @@ nfc_devices         ESP32-S3 NFC 读写器
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/boxes` | 列表 |
-| POST | `/api/boxes` | 创建 |
+| POST | `/api/boxes` | 创建（可指定 `template_id` 与柜内层位） |
 | GET | `/api/boxes/<id>` | 详情 |
-| PUT | `/api/boxes/<id>` | 更新（含自动调整格子） |
+| PUT | `/api/boxes/<id>` | 更新（含自动调整格子、外观模板和柜内层位） |
 | DELETE | `/api/boxes/<id>` | 删除（需为空） |
 | PUT | `/api/boxes/<id>/layout` | 更新地图位置 |
 | GET | `/api/boxes/<id>/grid` | 获取网格数据（含各格子的元器件信息） |
@@ -405,11 +440,28 @@ nfc_devices         ESP32-S3 NFC 读写器
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/cabinets` | 列表 |
-| POST | `/api/cabinets` | 创建 |
+| POST | `/api/cabinets` | 创建（可指定 `template_id` 与 `layer_count`） |
 | GET | `/api/cabinets/<id>` | 详情 |
-| PUT | `/api/cabinets/<id>` | 更新 |
+| PUT | `/api/cabinets/<id>` | 更新（会校验层数不能小于已占用层位） |
 | DELETE | `/api/cabinets/<id>` | 删除（需为空） |
 | PUT | `/api/cabinets/<id>/layout` | 更新地图位置 |
+
+### 3D 模型外观
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/model-assets` | 列出 GLB 模型资产 |
+| POST | `/api/model-assets/upload` | 上传 GLB，检查模型结构并保存节点报告 |
+| PUT | `/api/model-assets/<id>` | 更新模型名称、类型和物理尺寸 |
+| DELETE | `/api/model-assets/<id>` | 删除未被模板引用的模型资产 |
+| GET | `/api/cabinet-templates` | 列出柜体模板 |
+| POST | `/api/cabinet-templates` | 创建柜体模板 |
+| PUT | `/api/cabinet-templates/<id>` | 更新柜体模板 |
+| DELETE | `/api/cabinet-templates/<id>` | 删除未被柜子引用的柜体模板 |
+| GET | `/api/box-templates` | 列出收纳盒模板 |
+| POST | `/api/box-templates` | 创建收纳盒模板 |
+| PUT | `/api/box-templates/<id>` | 更新收纳盒模板 |
+| DELETE | `/api/box-templates/<id>` | 删除未被收纳盒引用的模板 |
 
 ### 分类
 
@@ -570,7 +622,21 @@ CLI 来源识别：请求头 `X-Inventory-Source: inventory-cli` 可跳过 Token
 2. 指定 `cell_row`（实际上是 compartment_id）
 3. 指定 `cell_row` + `cell_col`（通过行列坐标查找格子）
 
-### 8.5 LED 定位
+### 8.5 3D 模型外观
+
+3D 外观配置分为“模型资产”和“模板”两层：模型资产只保存上传的 GLB 文件、物理尺寸和结构检查报告；柜体模板、收纳盒模板负责把模型资产组合成业务可复用的外观配置。这样做的原因是模型文件体积较大且可被多个模板复用，模板又可被多个柜子或收纳盒引用，能避免重复上传和后续外观调整时的数据分叉。
+
+上传模型时，`ModelAppearanceRepository.create_model_asset_from_upload()` 只接受 `.glb` 文件，并调用 `scripts/check_glb_model.py` 解析 GLB 头、JSON chunk 和节点结构；检查结果写入 `model_assets.node_report_json`，供前端展示和后续排查模型规范问题。
+
+删除约束由仓储层显式执行：
+
+- 模型资产被 `cabinet_templates` 或 `box_templates` 引用时不能删除。
+- 柜体模板被 `cabinets.template_id` 引用时不能删除。
+- 收纳盒模板被 `boxes.template_id` 引用时不能删除。
+
+这个约束比单纯依赖 `ON DELETE SET NULL` 更严格，避免用户误删仍在使用的外观配置；数据库外键的 `SET NULL` 主要用于兼容和兜底。
+
+### 8.6 LED 定位
 
 LED 定位由 Flask 作为局域网代理：前端触发定位按钮 → `routes/led.py` 解析请求 → `LedService` 查询 `InventoryRepository` → `LedRepository` 读取设备、灯带和盒子映射 → `LedProxy` 向 ESP32 发送 `/api/led/set` 或 `/api/led/clear`。
 
@@ -581,7 +647,7 @@ LED 定位由 Flask 作为局域网代理：前端触发定位按钮 → `routes
 - 设备连接测试失败时返回 `{connected: false, error: "..."}`，不会让前端收到 500。
 - 前端设置弹窗包含 `设备 Token`、`LED 定位` 与 `NFC 读写器` 标签页，定位入口仅在 `ledConfig.enabled` 为真时显示。
 
-### 8.6 灯带远程配置同步
+### 8.7 灯带远程配置同步
 
 灯带 CRUD 操作（创建、更新、删除）在保存到数据库后，自动同步到 ESP32 硬件。同步通过 `LedProxy` 调用 ESP32 的 `/api/config/strip` 和 `/api/config/strip/remove` 端点实现。
 
@@ -591,7 +657,7 @@ LED 定位由 Flask 作为局域网代理：前端触发定位按钮 → `routes
 - 设备禁用时跳过同步，不产生警告。
 - 设备卡片提供"同步"按钮，通过 `POST /api/settings/led/devices/<id>/sync` 端点调用 ESP32 `/api/config` 进行全量同步，将数据库中该设备的所有灯带一次性推送到硬件；若同一 ESP32 关联了 NFC 读写器，同步包会附带 NFC 配置，避免整包保存时覆盖另一类功能。
 
-### 8.7 NFC 远程读写
+### 8.8 NFC 远程读写
 
 NFC 远程读写沿用 LED 的局域网代理模式：前端调用库存系统 API → `routes/nfc.py` 解析请求 → `NfcDeviceService` 生成 request_id、NDEF 载荷并编排绑定逻辑 → `NfcProxy` 通过 HTTP JSON 调用 ESP32-S3 → `NfcRepository` 更新或查询 `boxes.nfc_uid`。
 
@@ -610,13 +676,14 @@ NFC 远程读写沿用 LED 的局域网代理模式：前端调用库存系统 A
 
 ### 9.1 概述
 
-3D 地图视图是对 2D 地图的补充展示，使用 Three.js 将柜子和收纳盒以可交互 3D 模型呈现。用户可在地图工具栏切换 2D/3D，两种视图互斥显隐；3D 模式下可点击抽屉把手拉出收纳盒、查看格子与元器件标签、拖拽调整位置并保存到现有 layout API。
+3D 地图视图是对 2D 地图的补充展示，使用 Three.js 将柜子和收纳盒以可交互 3D 模型呈现。用户可在地图工具栏切换 2D/3D，两种视图互斥显隐；3D 模式下可点击抽屉把手拉出收纳盒、查看格子与元器件标签、拖拽调整位置并保存到现有 layout API。默认参数化模型仍可直接使用；当柜子或收纳盒绑定外观模板时，3D 引擎会优先使用模板关联的 GLB 模型资产。
 
 ### 9.2 技术栈
 
 - Three.js r171：3D 场景、材质、灯光、InstancedMesh
 - OrbitControls：相机轨道控制
 - CSS2DRenderer / CSS2DObject：将 HTML 标签渲染到 3D 空间
+- 轻量 GLB 2.0 加载器：加载 `model_assets` 上传的未压缩 mesh、材质和节点锚点，并为柜体层、底座、顶盖、单格和外框提供可复用实例
 - 原生 Pointer Events：统一鼠标和触摸交互
 
 ### 9.3 3D 场景结构
@@ -651,6 +718,8 @@ Scene
 | `LAYER_HEIGHT` | `0.35` | 每层抽屉高度 |
 | `WALL_THICKNESS` | `0.03` | 板壁厚度 |
 | `PULL_OUT_DISTANCE` | `0.7` | 抽屉拉出距离 |
+
+绑定模板后，模板中的毫米尺寸会参与模型缩放和布局计算；未绑定模板或模型加载失败时，前端应保留参数化模型兜底，避免单个模型资产问题导致整张 3D 地图不可用。
 
 ### 9.5 交互设计
 
@@ -695,7 +764,11 @@ Scene
 ### 运行测试
 
 ```bash
-python -m pytest tests/ -v
+# Windows PowerShell
+.venv\Scripts\python.exe -m pytest tests/ -v
+
+# macOS / Linux
+.venv/bin/python -m pytest tests/ -v
 ```
 
 ### 测试架构
@@ -727,6 +800,7 @@ python -m pytest tests/ -v
 | test_nfc_api.py | NFC 绑定/写入/查询/盒子数据 | 8 |
 | test_nfc_device_feature.py | NFC 读写器表初始化、仓储、服务和 API | 10 |
 | test_map_api.py | 地图数据/背景/搜索 | 8 |
+| test_model_appearance_api.py | GLB 模型上传检查、模板引用约束、柜内层位规则 | 7 |
 | test_bom_api.py | BOM 导入/领料/导出 | 8 |
 | test_frontend_log_api.py | 前端日志上报 | 4 |
 | test_led_feature.py | LED 表初始化、仓储、服务、API、灯带同步和 LED/NFC 共用设备同步 | 20 |

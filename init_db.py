@@ -25,11 +25,13 @@ CREATE TABLE IF NOT EXISTS boxes (
     color TEXT DEFAULT '#84b59b',
     cabinet_id INTEGER,
     cabinet_slot INTEGER DEFAULT 0,
+    template_id INTEGER,
     nfc_uid TEXT UNIQUE,
     position_x REAL DEFAULT 0,
     position_y REAL DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (cabinet_id) REFERENCES cabinets(id) ON DELETE SET NULL
+    FOREIGN KEY (cabinet_id) REFERENCES cabinets(id) ON DELETE SET NULL,
+    FOREIGN KEY (template_id) REFERENCES box_templates(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS cabinets (
@@ -37,9 +39,66 @@ CREATE TABLE IF NOT EXISTS cabinets (
     name TEXT NOT NULL UNIQUE,
     description TEXT,
     color TEXT DEFAULT '#8b9aae',
+    template_id INTEGER,
+    layer_count INTEGER NOT NULL DEFAULT 1,
     position_x REAL DEFAULT 0,
     position_y REAL DEFAULT 0,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (template_id) REFERENCES cabinet_templates(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    file_path TEXT NOT NULL UNIQUE,
+    original_name TEXT NOT NULL,
+    file_size INTEGER NOT NULL DEFAULT 0,
+    unit TEXT NOT NULL DEFAULT 'mm',
+    width_mm REAL,
+    height_mm REAL,
+    depth_mm REAL,
+    node_report_json TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cabinet_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    structure_type TEXT NOT NULL DEFAULT 'drawer_cabinet',
+    layer_model_asset_id INTEGER,
+    base_model_asset_id INTEGER,
+    top_model_asset_id INTEGER,
+    layer_height_mm REAL NOT NULL DEFAULT 80,
+    pull_axis TEXT NOT NULL DEFAULT 'z',
+    pull_distance_mm REAL NOT NULL DEFAULT 160,
+    slot_offset_x_mm REAL NOT NULL DEFAULT 0,
+    slot_offset_y_mm REAL NOT NULL DEFAULT 0,
+    slot_offset_z_mm REAL NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (layer_model_asset_id) REFERENCES model_assets(id) ON DELETE SET NULL,
+    FOREIGN KEY (base_model_asset_id) REFERENCES model_assets(id) ON DELETE SET NULL,
+    FOREIGN KEY (top_model_asset_id) REFERENCES model_assets(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS box_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    cell_model_asset_id INTEGER,
+    frame_model_asset_id INTEGER,
+    cell_width_mm REAL NOT NULL DEFAULT 28,
+    cell_depth_mm REAL NOT NULL DEFAULT 28,
+    cell_height_mm REAL NOT NULL DEFAULT 12,
+    gap_x_mm REAL NOT NULL DEFAULT 2,
+    gap_z_mm REAL NOT NULL DEFAULT 2,
+    padding_x_mm REAL NOT NULL DEFAULT 4,
+    padding_z_mm REAL NOT NULL DEFAULT 4,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (cell_model_asset_id) REFERENCES model_assets(id) ON DELETE SET NULL,
+    FOREIGN KEY (frame_model_asset_id) REFERENCES model_assets(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS compartments (
@@ -214,6 +273,8 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_active ON api_tokens(active);
 CREATE INDEX IF NOT EXISTS idx_led_strips_device_id ON led_strips(device_id);
 CREATE INDEX IF NOT EXISTS idx_led_box_mapping_strip_id ON led_box_mapping(strip_id);
 CREATE INDEX IF NOT EXISTS idx_nfc_devices_enabled ON nfc_devices(enabled);
+CREATE INDEX IF NOT EXISTS idx_model_assets_type ON model_assets(type);
+CREATE INDEX IF NOT EXISTS idx_cabinet_templates_structure_type ON cabinet_templates(structure_type);
 """
 
 
@@ -248,8 +309,48 @@ def init_database(database_path: Path) -> None:
             conn.execute("ALTER TABLE boxes ADD COLUMN cabinet_id INTEGER")
         if "cabinet_slot" not in box_columns:
             conn.execute("ALTER TABLE boxes ADD COLUMN cabinet_slot INTEGER DEFAULT 0")
+        if "template_id" not in box_columns:
+            conn.execute("ALTER TABLE boxes ADD COLUMN template_id INTEGER")
         conn.execute("UPDATE boxes SET color = '#84b59b' WHERE color IS NULL OR TRIM(color) = ''")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_boxes_cabinet_id ON boxes(cabinet_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_boxes_template_id ON boxes(template_id)")
+        duplicate_slots = conn.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT cabinet_id, cabinet_slot
+                FROM boxes
+                WHERE cabinet_id IS NOT NULL
+                GROUP BY cabinet_id, cabinet_slot
+                HAVING COUNT(*) > 1
+            )
+            """
+        ).fetchone()[0]
+        if duplicate_slots == 0:
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_boxes_cabinet_slot_unique
+                ON boxes(cabinet_id, cabinet_slot)
+                WHERE cabinet_id IS NOT NULL
+                """
+            )
+
+        cabinet_columns = {row[1] for row in conn.execute("PRAGMA table_info(cabinets)").fetchall()}
+        if "template_id" not in cabinet_columns:
+            conn.execute("ALTER TABLE cabinets ADD COLUMN template_id INTEGER")
+        if "layer_count" not in cabinet_columns:
+            conn.execute("ALTER TABLE cabinets ADD COLUMN layer_count INTEGER NOT NULL DEFAULT 1")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cabinets_template_id ON cabinets(template_id)")
+        conn.execute(
+            """
+            UPDATE cabinets
+            SET layer_count = MAX(
+                1,
+                COALESCE((SELECT MAX(NULLIF(cabinet_slot, 0)) FROM boxes WHERE boxes.cabinet_id = cabinets.id), 0),
+                COALESCE((SELECT COUNT(*) FROM boxes WHERE boxes.cabinet_id = cabinets.id), 0)
+            )
+            WHERE layer_count IS NULL OR layer_count < 1
+            """
+        )
 
         led_mapping_columns = {row[1] for row in conn.execute("PRAGMA table_info(led_box_mapping)").fetchall()}
         if "color" not in led_mapping_columns:

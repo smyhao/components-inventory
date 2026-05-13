@@ -50,6 +50,7 @@ function app() {
             }
         }
     });
+    const modelAppearanceFeature = window.InventoryModules?.createModelAppearanceFeature?.({ api, uploadFile, confirm });
     // 3D 地图功能模块：依赖 api 进行格子数据懒加载和布局 API 调用。
     const map3dFeature = window.InventoryModules?.createMap3DFeature?.({ api, logAction });
 
@@ -169,6 +170,7 @@ function app() {
     const appWithStorage = window.InventoryModules?.mergeFeature(appWithComponents, storageFeature) || appWithComponents;
     const appWithMap = window.InventoryModules?.mergeFeature(appWithStorage, mapFeature) || appWithStorage;
     const appWithBom = window.InventoryModules?.mergeFeature(appWithMap, bomFeature) || appWithMap;
-    const appWith3D = window.InventoryModules?.mergeFeature(appWithBom, map3dFeature) || appWithBom;
+    const appWithAppearance = window.InventoryModules?.mergeFeature(appWithBom, modelAppearanceFeature) || appWithBom;
+    const appWith3D = window.InventoryModules?.mergeFeature(appWithAppearance, map3dFeature) || appWithAppearance;
     return window.InventoryModules?.mergeFeature(appWith3D, automationFeature) || appWith3D;
 }

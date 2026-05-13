@@ -6,7 +6,7 @@ from typing import Any
 
 from config import DEFAULT_BOX_COLOR
 from models import InventoryError, clean_color, clean_int, clean_optional_int, clean_text
-from repositories._utils import image_url
+from repositories._utils import file_url, image_url
 from repositories.base import BaseRepository
 
 
@@ -23,11 +23,31 @@ class BoxRepository(BaseRepository):
                 SELECT
                     b.*,
                     cb.name AS cabinet_name,
+                    cb.layer_count AS cabinet_layer_count,
+                    bt.name AS template_name,
+                    bt.cell_width_mm AS template_cell_width_mm,
+                    bt.cell_depth_mm AS template_cell_depth_mm,
+                    bt.cell_height_mm AS template_cell_height_mm,
+                    bt.gap_x_mm AS template_gap_x_mm,
+                    bt.gap_z_mm AS template_gap_z_mm,
+                    bt.padding_x_mm AS template_padding_x_mm,
+                    bt.padding_z_mm AS template_padding_z_mm,
+                    ca.file_path AS cell_asset_file_path,
+                    ca.width_mm AS cell_asset_width_mm,
+                    ca.height_mm AS cell_asset_height_mm,
+                    ca.depth_mm AS cell_asset_depth_mm,
+                    fa.file_path AS frame_asset_file_path,
+                    fa.width_mm AS frame_asset_width_mm,
+                    fa.height_mm AS frame_asset_height_mm,
+                    fa.depth_mm AS frame_asset_depth_mm,
                     COUNT(DISTINCT c.compartment_id) AS occupied_count,
                     COUNT(c.id) AS component_count,
                     COALESCE(SUM(c.quantity), 0) AS total_quantity
                 FROM boxes b
                 LEFT JOIN cabinets cb ON cb.id = b.cabinet_id
+                LEFT JOIN box_templates bt ON bt.id = b.template_id
+                LEFT JOIN model_assets ca ON ca.id = bt.cell_model_asset_id
+                LEFT JOIN model_assets fa ON fa.id = bt.frame_model_asset_id
                 LEFT JOIN components c ON c.box_id = b.id
                 GROUP BY b.id
                 ORDER BY COALESCE(cb.name, ''), b.cabinet_slot, b.name
@@ -35,7 +55,7 @@ class BoxRepository(BaseRepository):
             )
             items = []
             for row in rows:
-                item = dict(row)
+                item = self._box_to_dict(row)
                 item["total_slots"] = item["rows"] * item["cols"]
                 item["used_slots"] = item["occupied_count"]
                 items.append(item)
@@ -49,11 +69,31 @@ class BoxRepository(BaseRepository):
                 SELECT
                     b.*,
                     cb.name AS cabinet_name,
+                    cb.layer_count AS cabinet_layer_count,
+                    bt.name AS template_name,
+                    bt.cell_width_mm AS template_cell_width_mm,
+                    bt.cell_depth_mm AS template_cell_depth_mm,
+                    bt.cell_height_mm AS template_cell_height_mm,
+                    bt.gap_x_mm AS template_gap_x_mm,
+                    bt.gap_z_mm AS template_gap_z_mm,
+                    bt.padding_x_mm AS template_padding_x_mm,
+                    bt.padding_z_mm AS template_padding_z_mm,
+                    ca.file_path AS cell_asset_file_path,
+                    ca.width_mm AS cell_asset_width_mm,
+                    ca.height_mm AS cell_asset_height_mm,
+                    ca.depth_mm AS cell_asset_depth_mm,
+                    fa.file_path AS frame_asset_file_path,
+                    fa.width_mm AS frame_asset_width_mm,
+                    fa.height_mm AS frame_asset_height_mm,
+                    fa.depth_mm AS frame_asset_depth_mm,
                     COUNT(DISTINCT c.compartment_id) AS occupied_count,
                     COUNT(c.id) AS component_count,
                     COALESCE(SUM(c.quantity), 0) AS total_quantity
                 FROM boxes b
                 LEFT JOIN cabinets cb ON cb.id = b.cabinet_id
+                LEFT JOIN box_templates bt ON bt.id = b.template_id
+                LEFT JOIN model_assets ca ON ca.id = bt.cell_model_asset_id
+                LEFT JOIN model_assets fa ON fa.id = bt.frame_model_asset_id
                 LEFT JOIN components c ON c.box_id = b.id
                 WHERE b.id = ?
                 GROUP BY b.id
@@ -62,7 +102,7 @@ class BoxRepository(BaseRepository):
             )
             if not row:
                 raise InventoryError("收纳盒不存在")
-            item = dict(row)
+            item = self._box_to_dict(row)
             item["total_slots"] = item["rows"] * item["cols"]
             item["used_slots"] = item["occupied_count"]
             return item
@@ -86,20 +126,21 @@ class BoxRepository(BaseRepository):
         color = clean_color(payload.get("color"))
         cabinet_id = clean_optional_int(payload.get("cabinet_id"))
         cabinet_slot = clean_int(payload.get("cabinet_slot"), 0)
+        template_id = clean_optional_int(payload.get("template_id"))
         if not name:
             raise InventoryError("box name is required")
         if rows < 1 or cols < 1:
             raise InventoryError("rows and cols must be greater than 0")
 
         with self.connect() as conn:
-            if cabinet_id is not None and not self._fetchone(conn, "SELECT id FROM cabinets WHERE id = ?", (cabinet_id,)):
-                raise InventoryError("cabinet not found")
+            self._validate_template(conn, template_id)
+            cabinet_slot = self._validate_cabinet_slot(conn, cabinet_id, cabinet_slot)
             cur = conn.execute(
                 """
-                INSERT INTO boxes (name, rows, cols, description, color, cabinet_id, cabinet_slot, position_x, position_y)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
+                INSERT INTO boxes (name, rows, cols, description, color, cabinet_id, cabinet_slot, template_id, position_x, position_y)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
                 """,
-                (name, rows, cols, description, color, cabinet_id, cabinet_slot),
+                (name, rows, cols, description, color, cabinet_id, cabinet_slot, template_id),
             )
             box_id = cur.lastrowid
             self._ensure_compartments(conn, box_id, rows, cols)
@@ -121,11 +162,12 @@ class BoxRepository(BaseRepository):
             color = clean_color(payload.get("color"), existing["color"] or DEFAULT_BOX_COLOR)
             cabinet_id = clean_optional_int(payload.get("cabinet_id")) if "cabinet_id" in payload else existing["cabinet_id"]
             cabinet_slot = clean_int(payload.get("cabinet_slot"), existing["cabinet_slot"] or 0)
+            template_id = clean_optional_int(payload.get("template_id")) if "template_id" in payload else existing["template_id"]
             if rows < 1 or cols < 1:
                 raise InventoryError("行列数量必须大于 0")
 
-            if cabinet_id is not None and not self._fetchone(conn, "SELECT id FROM cabinets WHERE id = ?", (cabinet_id,)):
-                raise InventoryError("cabinet not found")
+            self._validate_template(conn, template_id)
+            cabinet_slot = self._validate_cabinet_slot(conn, cabinet_id, cabinet_slot, box_id)
 
             occupied_out_of_range = self._fetchall(
                 conn,
@@ -143,10 +185,10 @@ class BoxRepository(BaseRepository):
             conn.execute(
                 """
                 UPDATE boxes
-                SET name = ?, rows = ?, cols = ?, description = ?, color = ?, cabinet_id = ?, cabinet_slot = ?
+                SET name = ?, rows = ?, cols = ?, description = ?, color = ?, cabinet_id = ?, cabinet_slot = ?, template_id = ?
                 WHERE id = ?
                 """,
-                (name, rows, cols, description, color, cabinet_id, cabinet_slot, box_id),
+                (name, rows, cols, description, color, cabinet_id, cabinet_slot, template_id, box_id),
             )
             conn.execute(
                 "DELETE FROM compartments WHERE box_id = ? AND (row > ? OR col > ?)",
@@ -255,3 +297,73 @@ class BoxRepository(BaseRepository):
                 (box_id, row, col),
             )
             return dict(result) if result else None
+
+    def _validate_template(self, conn: sqlite3.Connection, template_id: int | None) -> None:
+        if template_id is None:
+            return
+        if not self._fetchone(conn, "SELECT id FROM box_templates WHERE id = ?", (template_id,)):
+            raise InventoryError("收纳盒模板不存在")
+
+    def _validate_cabinet_slot(
+        self,
+        conn: sqlite3.Connection,
+        cabinet_id: int | None,
+        cabinet_slot: int,
+        box_id: int | None = None,
+    ) -> int:
+        if cabinet_id is None:
+            return 0
+        cabinet = self._fetchone(conn, "SELECT id, layer_count FROM cabinets WHERE id = ?", (cabinet_id,))
+        if not cabinet:
+            raise InventoryError("cabinet not found")
+        layer_count = max(1, int(cabinet["layer_count"] or 1))
+        if cabinet_slot < 1:
+            for candidate in range(1, layer_count + 1):
+                params = (cabinet_id, candidate, box_id) if box_id else (cabinet_id, candidate)
+                sql = "SELECT id FROM boxes WHERE cabinet_id = ? AND cabinet_slot = ? AND id <> ?" if box_id else "SELECT id FROM boxes WHERE cabinet_id = ? AND cabinet_slot = ?"
+                if not self._fetchone(conn, sql, params):
+                    return candidate
+            raise InventoryError("柜子已满，无法继续放入收纳盒")
+        if cabinet_slot < 1 or cabinet_slot > layer_count:
+            raise InventoryError(f"柜内层位必须在 1..{layer_count} 范围内")
+        params: tuple[Any, ...]
+        if box_id:
+            sql = "SELECT id FROM boxes WHERE cabinet_id = ? AND cabinet_slot = ? AND id <> ?"
+            params = (cabinet_id, cabinet_slot, box_id)
+        else:
+            sql = "SELECT id FROM boxes WHERE cabinet_id = ? AND cabinet_slot = ?"
+            params = (cabinet_id, cabinet_slot)
+        if self._fetchone(conn, sql, params):
+            raise InventoryError("该柜子层位已经放置了收纳盒")
+        return cabinet_slot
+
+    def _asset_dict(self, row: sqlite3.Row, prefix: str) -> dict[str, Any] | None:
+        key = f"{prefix}_asset_file_path"
+        if not row[key]:
+            return None
+        return {
+            "url": file_url(row[key]),
+            "width_mm": row[f"{prefix}_asset_width_mm"],
+            "height_mm": row[f"{prefix}_asset_height_mm"],
+            "depth_mm": row[f"{prefix}_asset_depth_mm"],
+        }
+
+    def _box_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        if row["template_id"]:
+            item["template"] = {
+                "id": row["template_id"],
+                "name": row["template_name"],
+                "cell_width_mm": row["template_cell_width_mm"],
+                "cell_depth_mm": row["template_cell_depth_mm"],
+                "cell_height_mm": row["template_cell_height_mm"],
+                "gap_x_mm": row["template_gap_x_mm"],
+                "gap_z_mm": row["template_gap_z_mm"],
+                "padding_x_mm": row["template_padding_x_mm"],
+                "padding_z_mm": row["template_padding_z_mm"],
+                "cell_model_asset": self._asset_dict(row, "cell"),
+                "frame_model_asset": self._asset_dict(row, "frame"),
+            }
+        else:
+            item["template"] = None
+        return item

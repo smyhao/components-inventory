@@ -2963,6 +2963,80 @@ label {
     gap: 14px;
 }
 
+.appearance-subtabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.appearance-subtabs button {
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(219, 205, 184, 0.78);
+    background: rgba(255, 253, 249, 0.72);
+    color: var(--muted);
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.appearance-subtabs button.active {
+    background: #fffdfa;
+    color: var(--text);
+    box-shadow: 0 1px 8px rgba(80, 61, 38, 0.10);
+}
+
+.appearance-form-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    align-items: end;
+    margin-top: 12px;
+}
+
+.appearance-axis-hint {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.appearance-upload-btn,
+.appearance-save-btn {
+    min-height: 42px;
+    justify-content: center;
+}
+
+.appearance-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.appearance-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    background: rgba(255, 253, 249, 0.80);
+    border: 1px solid rgba(219, 205, 184, 0.72);
+}
+
+.appearance-row > div:first-child {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.appearance-row small {
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
 .led-toggle-row,
 .led-section-header {
     display: flex;
@@ -3326,10 +3400,16 @@ label {
 
     .led-overview,
     .led-form-grid,
+    .appearance-form-grid,
     .nfc-config-grid,
     .nfc-form-grid,
     .nfc-permission-grid {
         grid-template-columns: 1fr;
+    }
+
+    .appearance-row {
+        align-items: stretch;
+        flex-direction: column;
     }
 
     .nfc-form-wide {

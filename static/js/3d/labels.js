@@ -190,55 +190,207 @@
         return group;
     }
 
+    function anchorDirection(root, fromName, toName) {
+        var THREE = global.THREE;
+        var from = findChildByNormalizedName(root, fromName);
+        var to = findChildByNormalizedName(root, toName);
+        var fromWorld;
+        var toWorld;
+        var direction;
+
+        if (!from || !to) return null;
+        fromWorld = new THREE.Vector3();
+        toWorld = new THREE.Vector3();
+        from.getWorldPosition(fromWorld);
+        to.getWorldPosition(toWorld);
+        direction = toWorld.sub(fromWorld);
+        if (direction.lengthSq() < 0.000001) return null;
+        return direction.normalize();
+    }
+
+    function orientNameplateToNormal(label, parent, normal, normalIsWorld) {
+        var THREE = global.THREE;
+        var zAxis;
+        var yAxis = new THREE.Vector3(0, 1, 0);
+        var xAxis;
+        var matrix;
+        var worldQuat;
+        var parentQuat;
+
+        if (!label || !normal) return false;
+        zAxis = normal.clone();
+        if (!normalIsWorld && parent) {
+            parentQuat = new THREE.Quaternion();
+            parent.getWorldQuaternion(parentQuat);
+            zAxis.applyQuaternion(parentQuat);
+        }
+        if (zAxis.lengthSq() < 0.000001) return false;
+        zAxis.normalize();
+        yAxis.sub(zAxis.clone().multiplyScalar(yAxis.dot(zAxis)));
+        if (yAxis.lengthSq() < 0.000001) {
+            yAxis.set(0, 0, 1).sub(zAxis.clone().multiplyScalar(zAxis.z));
+        }
+        if (yAxis.lengthSq() < 0.000001) return false;
+        yAxis.normalize();
+        xAxis = yAxis.clone().cross(zAxis).normalize();
+        yAxis = zAxis.clone().cross(xAxis).normalize();
+
+        matrix = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+        worldQuat = new THREE.Quaternion().setFromRotationMatrix(matrix);
+        if (parent) {
+            parentQuat = new THREE.Quaternion();
+            parent.getWorldQuaternion(parentQuat);
+            label.quaternion.copy(parentQuat.invert().multiply(worldQuat));
+        } else {
+            label.quaternion.copy(worldQuat);
+        }
+        return true;
+    }
+
     /** 为柜子底部柜腿中间添加实体铭牌。 */
     function addCabinetNameplate(cabinetGroup, cabinetData) {
+        var THREE = global.THREE;
         var C = modules._3D || {};
+        var modelTools = modules._3DModels || {};
         var depth;
         var legHeight;
         var label;
+        var anchor;
+        var target;
+        var normal;
+        var anchorQuat;
+        var parentQuat;
+        var modelBox;
+        var modelSize;
+        var labelWidth = 0.82;
+        var labelHeight = 0.115;
+        var fontSize = 64;
 
         if (!cabinetGroup || !cabinetData) return;
         removeLabelsByType(cabinetGroup, 'label-cabinet-nameplate');
 
         depth = C.CABINET_DEPTH || 0.8;
         legHeight = C.CABINET_LEG_HEIGHT || 0.16;
+        if (cabinetData.template && typeof modelTools.getRenderableBox === 'function') {
+            modelBox = modelTools.getRenderableBox(cabinetGroup);
+            modelSize = new THREE.Vector3();
+            if (!modelBox.isEmpty()) {
+                modelBox.getSize(modelSize);
+                labelWidth = clamp(modelSize.x * 0.58, 0.12, 0.48);
+                labelHeight = clamp(modelSize.y * 0.10, 0.028, 0.075);
+                fontSize = Math.round(clamp(labelHeight / 0.075 * 44, 22, 48));
+            }
+        }
         label = createPhysicalNameplate(cabinetData.name, {
-            width: 0.82,
-            height: 0.115,
-            fontSize: 64,
+            width: labelWidth,
+            height: labelHeight,
+            fontSize: fontSize,
             textMaxWidth: 486,
             accent: cabinetData.color,
             type: 'label-cabinet-nameplate'
         });
-        label.position.set(0, legHeight * 0.60, depth / 2 + 0.032);
+        if (cabinetData.template) {
+            anchor = findChildByNormalizedName(cabinetGroup, 'NAMEPLATE_ANCHOR');
+            if (anchor) {
+                target = new THREE.Vector3();
+                anchorQuat = new THREE.Quaternion();
+                parentQuat = new THREE.Quaternion();
+                anchor.getWorldPosition(target);
+                anchor.getWorldQuaternion(anchorQuat);
+                cabinetGroup.getWorldQuaternion(parentQuat);
+                label.position.copy(cabinetGroup.worldToLocal(target));
+                normal = anchorDirection(cabinetGroup, 'DRAWER_CLOSED_ANCHOR', 'DRAWER_OPEN_ANCHOR');
+                if (!orientNameplateToNormal(label, cabinetGroup, normal, true)) {
+                    label.quaternion.copy(parentQuat.invert().multiply(anchorQuat));
+                }
+            } else {
+                label.position.copy(cabinetNameplateFallbackPosition(cabinetGroup));
+            }
+        } else {
+            label.position.set(0, legHeight * 0.60, depth / 2 + 0.032);
+        }
         label.userData.type = 'label-cabinet-nameplate';
         cabinetGroup.add(label);
+    }
+
+    function cabinetNameplateFallbackPosition(cabinetGroup) {
+        var THREE = global.THREE;
+        var modelTools = modules._3DModels || {};
+        var box = typeof modelTools.getRenderableBox === 'function'
+            ? modelTools.getRenderableBox(cabinetGroup)
+            : new THREE.Box3().setFromObject(cabinetGroup);
+        var center = new THREE.Vector3();
+        var target;
+
+        if (box.isEmpty()) return new THREE.Vector3(0, 0.09, 0.43);
+        box.getCenter(center);
+        target = new THREE.Vector3(center.x, box.min.y + 0.08, box.max.z + 0.032);
+        return cabinetGroup.worldToLocal(target);
     }
 
     /** 为抽屉门板添加实体收纳盒铭牌；它挂在 drawerGroup 下，会随抽屉一起抽拉。 */
     function addDrawerNameplate(drawerGroup, boxData) {
         var C = modules._3D || {};
+        var modelTools = modules._3DModels || {};
         var layerHeight = C.LAYER_HEIGHT || 0.35;
         var thickness = C.WALL_THICKNESS || 0.03;
         var depth = C.CABINET_DEPTH || 0.8;
         var panelHeight = layerHeight - thickness - 0.02;
         var label;
+        var box;
+        var size;
+        var center;
+        var labelWidth = 0.74;
+        var labelHeight = 0.105;
+        var fontSize = 66;
 
         if (!drawerGroup) return;
         removeDrawerNameplate(drawerGroup);
         if (!boxData) return;
 
+        if (drawerGroup.userData && drawerGroup.userData.customModel && typeof modelTools.getRenderableBox === 'function') {
+            box = modelTools.getRenderableBox(drawerGroup);
+            size = new global.THREE.Vector3();
+            if (!box.isEmpty()) {
+                box.getSize(size);
+                labelWidth = clamp(size.x * 0.72, 0.08, 0.38);
+                labelHeight = clamp(size.y * 0.34, 0.022, 0.07);
+                fontSize = Math.round(clamp(labelHeight / 0.07 * 42, 20, 46));
+            }
+        }
+
         label = createPhysicalNameplate(boxData.name, {
-            width: 0.74,
-            height: 0.105,
-            fontSize: 66,
+            width: labelWidth,
+            height: labelHeight,
+            fontSize: fontSize,
             textMaxWidth: 488,
             accent: boxData.color,
             type: 'label-drawer-nameplate'
         });
-        label.position.set(0, panelHeight * 0.73 + thickness / 2, depth / 2 + 0.021);
+        if (drawerGroup.userData && drawerGroup.userData.customModel) {
+            if (drawerGroup.userData.nameplatePosition) {
+                label.position.copy(drawerGroup.userData.nameplatePosition);
+                if (drawerGroup.userData.nameplateNormal) {
+                    orientNameplateToNormal(label, drawerGroup, drawerGroup.userData.nameplateNormal, false);
+                } else if (drawerGroup.userData.nameplateQuaternion) {
+                    label.quaternion.copy(drawerGroup.userData.nameplateQuaternion);
+                }
+            } else if (box && !box.isEmpty()) {
+                center = new global.THREE.Vector3();
+                box.getCenter(center);
+                label.position.copy(drawerGroup.worldToLocal(new global.THREE.Vector3(center.x, center.y, box.max.z + 0.012)));
+            } else {
+                label.position.set(0, 0.04, 0.05);
+            }
+        } else {
+            label.position.set(0, panelHeight * 0.73 + thickness / 2, depth / 2 + 0.021);
+        }
         label.userData.type = 'label-drawer-nameplate';
         drawerGroup.add(label);
+    }
+
+    function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, Number(value) || min));
     }
 
     /** 移除单个抽屉名称牌。 */
@@ -426,6 +578,17 @@
         if (!root) return null;
         root.traverse(function visit(child) {
             if (!found && child.userData && child.userData.type === type) {
+                found = child;
+            }
+        });
+        return found;
+    }
+
+    function findChildByNormalizedName(root, normalizedName) {
+        var found = null;
+        if (!root) return null;
+        root.traverse(function visit(child) {
+            if (!found && child.userData && child.userData.normalizedName === normalizedName) {
                 found = child;
             }
         });

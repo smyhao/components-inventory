@@ -10,7 +10,8 @@
 - **BOM 管理** — 导入 CSV BOM 文件、自动匹配库存元器件、领料出库、导出 Picklist
 - **Excel 导入/导出** — 批量导入元器件（xlsx）、导出元器件清单
 - **NFC 功能** — NFC 标签绑定收纳盒、手机扫码直达盒子详情
-- **地图视图** — 可视化展示收纳盒位置、搜索元器件快速定位
+- **地图视图** — 可视化展示收纳盒位置、搜索元器件快速定位，支持 2D/3D 切换
+- **3D 模型外观** — 上传 GLB 模型，配置柜体/收纳盒模板，自定义 3D 展示外观
 - **数据统计** — 总览面板（元器件数/总量/低库存/分类统计）
 
 ## 快速开始
@@ -106,21 +107,26 @@ API_TOKEN=change-me python app.py
 
 ```
 components-inventory/
-├── app.py              # Flask 应用入口，所有 API 路由
-├── models.py           # 数据仓库层，SQLite CRUD 与业务逻辑
+├── app.py              # Flask 应用入口，初始化应用并注册蓝图
+├── models.py           # InventoryRepository 外观层，统一委托子仓储
 ├── init_db.py          # 数据库 Schema 与初始化
 ├── config.py           # 配置（路径、端口、环境变量）
 ├── logger.py           # 文件日志系统
 ├── requirements.txt    # Python 依赖
+├── routes/             # Flask 蓝图路由层
+├── services/           # 文件解析、BOM、LED/NFC 等业务服务
+├── repositories/       # SQLite 原生 SQL 仓储层
+├── scripts/            # 辅助脚本（如 GLB 模型检查）
 ├── data/               # SQLite 数据库（运行时生成）
-├── uploads/            # 图片上传目录（运行时生成）
+├── uploads/            # 图片、文档、模型上传目录（运行时生成）
 ├── static/             # 前端静态文件
 │   ├── index.html      # 主页面
 │   ├── box.html        # NFC 盒子详情页
 │   ├── css/            # 样式
-│   └── js/             # JavaScript 模块
+│   └── js/             # JavaScript 模块与 3D 引擎
 ├── examples/           # 示例文件
 │   └── sample_bom.csv  # BOM 导入示例
+├── tests/              # pytest 测试
 └── log/                # 运行日志
 ```
 
@@ -152,6 +158,17 @@ components-inventory/
 | PUT | `/api/boxes/<id>/layout` | 更新地图位置 |
 | GET | `/api/boxes/<id>/grid` | 网格详情 |
 
+### 柜子
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/cabinets` | 列表 |
+| POST | `/api/cabinets` | 新增 |
+| GET | `/api/cabinets/<id>` | 详情 |
+| PUT | `/api/cabinets/<id>` | 更新 |
+| DELETE | `/api/cabinets/<id>` | 删除 |
+| PUT | `/api/cabinets/<id>/layout` | 更新地图位置 |
+
 ### 库存
 
 | 方法 | 路径 | 说明 |
@@ -176,22 +193,42 @@ components-inventory/
 | POST | `/api/categories` | 新增分类 |
 | POST | `/api/images/upload` | 上传图片 |
 | DELETE | `/api/images/<id>` | 删除图片 |
+| POST | `/api/documents/upload` | 上传文档 |
+| DELETE | `/api/documents/<id>` | 删除文档 |
 | GET | `/api/stats` | 数据统计 |
 | GET | `/api/map` | 地图数据 |
 | POST | `/api/map/search` | 地图搜索 |
 | POST | `/api/nfc/bind` | 绑定 NFC |
 | POST | `/api/nfc/write` | 生成 NDEF 内容 |
 | GET | `/api/nfc/lookup/<uid>` | NFC UID 查询 |
-| GET | `/api/settings/tokens` | List active automation tokens |
-| POST | `/api/settings/tokens` | Create a device automation token |
-| DELETE | `/api/settings/tokens/<id>` | Revoke a device automation token |
+| GET | `/api/settings/tokens` | 列出设备自动化 Token |
+| POST | `/api/settings/tokens` | 创建设备自动化 Token |
+| DELETE | `/api/settings/tokens/<id>` | 撤销设备自动化 Token |
+
+### 3D 模型外观
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/model-assets` | 列出 GLB 模型资产 |
+| POST | `/api/model-assets/upload` | 上传并检查 GLB 模型 |
+| PUT | `/api/model-assets/<id>` | 更新模型名称、类型和尺寸 |
+| DELETE | `/api/model-assets/<id>` | 删除未被模板引用的模型 |
+| GET | `/api/cabinet-templates` | 列出柜体模板 |
+| POST | `/api/cabinet-templates` | 创建柜体模板 |
+| PUT | `/api/cabinet-templates/<id>` | 更新柜体模板 |
+| DELETE | `/api/cabinet-templates/<id>` | 删除未被柜子引用的柜体模板 |
+| GET | `/api/box-templates` | 列出收纳盒模板 |
+| POST | `/api/box-templates` | 创建收纳盒模板 |
+| PUT | `/api/box-templates/<id>` | 更新收纳盒模板 |
+| DELETE | `/api/box-templates/<id>` | 删除未被收纳盒引用的模板 |
 
 ## 技术栈
 
 - **后端**: Python Flask + SQLite（纯 SQL，无 ORM）
-- **前端**: 原生 HTML / CSS / JavaScript（无框架）
+- **前端**: 原生 HTML / CSS / JavaScript（无框架），Three.js 3D 地图
 - **图片处理**: Pillow
 - **Excel**: openpyxl
+- **模型检查**: 自带 GLB 检查脚本，上传时校验模型结构
 
 ## 许可证
 

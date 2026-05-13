@@ -195,6 +195,13 @@
         state.isFlying = true;
     }
 
+    function cancelFly() {
+        state.flyTarget = null;
+        state.flyLookAt = null;
+        state.flyDone = null;
+        state.isFlying = false;
+    }
+
     /** 每帧更新相机飞入；到达后执行一次回调，例如自动打开抽屉。 */
     function updateFly(sm) {
         var target;
@@ -347,6 +354,7 @@
     modules._3D.stopPulse = stopPulse;
     modules._3D.updatePulse = updatePulse;
     modules._3D.flyToTarget = flyToTarget;
+    modules._3D.cancelFly = cancelFly;
     modules._3D.updateFly = updateFly;
     modules._3D.flyToBox = flyToBox;
     modules._3D.updatePickLabels = updatePickLabels;

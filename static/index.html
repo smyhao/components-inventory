@@ -699,6 +699,14 @@
                     <label>列数<input type="number" min="1" max="20" x-model.number="boxForm.cols"></label>
                 </div>
                 <label>颜色<input type="color" x-model="boxForm.color" class="color-input"></label>
+                <label>收纳盒模板
+                    <select x-model="boxForm.template_id">
+                        <option value="">使用默认外观</option>
+                        <template x-for="template in boxTemplates" :key="template.id">
+                            <option :value="template.id" x-text="template.name"></option>
+                        </template>
+                    </select>
+                </label>
                 <label>注释<textarea rows="3" x-model="boxForm.description" placeholder="记录这个收纳盒的用途、位置或其他备注"></textarea></label>
                 <label>所属柜子
                     <select x-model="boxForm.cabinet_id">
@@ -708,7 +716,7 @@
                         </template>
                     </select>
                 </label>
-                <label x-show="boxForm.cabinet_id">柜内排序<input type="number" min="0" x-model.number="boxForm.cabinet_slot" placeholder="数字越小越靠前"></label>
+                <label x-show="boxForm.cabinet_id">柜内层位<input type="number" min="1" x-model.number="boxForm.cabinet_slot" placeholder="例如 1"></label>
                 <div class="box-preview" :style="`--box-accent:${boxForm.color}; grid-template-columns: repeat(${Math.min(boxForm.cols || 4, 8)}, 1fr);`">
                     <template x-for="i in Math.min((boxForm.rows || 4) * (boxForm.cols || 4), 64)" :key="i">
                         <span></span>
@@ -771,6 +779,17 @@
             <div class="modal-body form-stack">
                 <label>名称<input x-model="cabinetForm.name" placeholder="例如 电阻柜 A"></label>
                 <label>颜色<input type="color" x-model="cabinetForm.color" class="color-input"></label>
+                <div class="form-grid two">
+                    <label>柜体模板
+                        <select x-model="cabinetForm.template_id">
+                            <option value="">使用默认外观</option>
+                            <template x-for="template in cabinetTemplates" :key="template.id">
+                                <option :value="template.id" x-text="template.name"></option>
+                            </template>
+                        </select>
+                    </label>
+                    <label>柜子层数<input type="number" min="1" max="99" x-model.number="cabinetForm.layer_count"></label>
+                </div>
                 <label>注释<textarea rows="3" x-model="cabinetForm.description" placeholder="记录柜子的位置、层架或用途"></textarea></label>
                 <div class="cabinet-preview" :style="`--cabinet-accent:${cabinetForm.color}`">
                     <span></span><span></span><span></span>
@@ -813,6 +832,7 @@
                     <button class="settings-tab" :class="{ active: settingsTab === 'token' }" @click="settingsTab = 'token'">设备 Token</button>
                     <button class="settings-tab" :class="{ active: settingsTab === 'led' }" @click="settingsTab = 'led'; loadLedConfig()">LED 定位</button>
                     <button class="settings-tab" :class="{ active: settingsTab === 'nfc' }" @click="settingsTab = 'nfc'; loadNfcConfig()">NFC 读写器</button>
+                    <button class="settings-tab" :class="{ active: settingsTab === 'appearance3d' }" @click="settingsTab = 'appearance3d'; load3DAppearance()">3D 外观</button>
                 </div>
                 <div class="settings-tab-panel" x-show="settingsTab === 'token'">
                     <div class="modal-soft-section">
@@ -843,6 +863,101 @@
                                 </div>
                             </template>
                             <div class="empty-state" x-show="apiTokens.length === 0">还没有创建 Token</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-tab-panel" x-show="settingsTab === 'appearance3d'">
+                    <div class="appearance-subtabs">
+                        <button type="button" :class="{ active: appearanceTab === 'assets' }" @click="appearanceTab = 'assets'">模型库</button>
+                        <button type="button" :class="{ active: appearanceTab === 'cabinet-templates' }" @click="appearanceTab = 'cabinet-templates'">柜体模板</button>
+                        <button type="button" :class="{ active: appearanceTab === 'box-templates' }" @click="appearanceTab = 'box-templates'">收纳盒模板</button>
+                    </div>
+
+                    <div x-show="appearanceTab === 'assets'" class="modal-soft-section">
+                        <div class="section-mini-title">上传 GLB 模型</div>
+                        <div class="appearance-form-grid">
+                            <label>名称<input x-model="modelAssetForm.name" placeholder="例如 抽拉柜标准层"></label>
+                            <label>模型类型<select x-model="modelAssetForm.type"><option value="cabinet_layer">柜子标准层</option><option value="cabinet_base">柜子底座</option><option value="cabinet_top">柜子顶盖</option><option value="box_cell">收纳盒单格</option><option value="box_frame">收纳盒外框</option></select></label>
+                            <p class="appearance-axis-hint">模型资产尺寸按 GLB 导出坐标轴填写：X 向尺寸、Y 向高度、Z 向尺寸；柜子正面和铭牌朝向由锚点决定。</p>
+                            <label>X 向尺寸 mm<input type="number" min="0" step="0.1" x-model="modelAssetForm.width_mm"></label>
+                            <label>Y 向高度 mm<input type="number" min="0" step="0.1" x-model="modelAssetForm.height_mm"></label>
+                            <label>Z 向尺寸 mm<input type="number" min="0" step="0.1" x-model="modelAssetForm.depth_mm"></label>
+                            <label class="btn btn-primary appearance-upload-btn"><span x-text="modelAssetUploading ? '上传中...' : '选择 .glb 上传'"></span><input type="file" class="hidden" accept=".glb,model/gltf-binary" :disabled="modelAssetUploading" @change="uploadModelAsset($event)"></label>
+                        </div>
+                        <div class="appearance-list">
+                            <template x-for="asset in modelAssets" :key="asset.id">
+                                <div class="appearance-row">
+                                    <div>
+                                        <strong x-text="asset.name"></strong>
+                                        <small><span x-text="modelTypeLabel(asset.type)"></span> · <span x-text="asset.original_name"></span></small>
+                                        <small x-text="nodeIssueSummary(asset)"></small>
+                                    </div>
+                                    <div class="toolbar-actions">
+                                        <span class="inventory-chip">X <span x-text="asset.width_mm || '-'"></span> · Y <span x-text="asset.height_mm || '-'"></span> · Z <span x-text="asset.depth_mm || '-'"></span> mm</span>
+                                        <button class="btn btn-danger" @click="deleteModelAsset(asset)">删除</button>
+                                    </div>
+                                </div>
+                            </template>
+                            <div class="empty-state" x-show="modelAssets.length === 0">还没有上传 GLB 模型</div>
+                        </div>
+                    </div>
+
+                    <div x-show="appearanceTab === 'cabinet-templates'" class="modal-soft-section">
+                        <div class="led-section-header">
+                            <div class="section-mini-title" x-text="cabinetTemplateForm.id ? '编辑柜体模板' : '新增柜体模板'"></div>
+                            <button class="btn btn-secondary" @click="resetCabinetTemplateForm()">清空</button>
+                        </div>
+                        <div class="appearance-form-grid">
+                            <label>名称<input x-model="cabinetTemplateForm.name" placeholder="例如 五层抽拉柜"></label>
+                            <label>结构类型<select x-model="cabinetTemplateForm.structure_type"><option value="drawer_cabinet">抽拉柜</option><option value="open_shelf">开放架</option></select></label>
+                            <label>标准层模型<select x-model="cabinetTemplateForm.layer_model_asset_id"><option value="">默认模型</option><template x-for="asset in modelAssetsByType('cabinet_layer')" :key="asset.id"><option :value="asset.id" x-text="asset.name"></option></template></select></label>
+                            <label>底座模型<select x-model="cabinetTemplateForm.base_model_asset_id"><option value="">不使用</option><template x-for="asset in modelAssetsByType('cabinet_base')" :key="asset.id"><option :value="asset.id" x-text="asset.name"></option></template></select></label>
+                            <label>顶盖模型<select x-model="cabinetTemplateForm.top_model_asset_id"><option value="">不使用</option><template x-for="asset in modelAssetsByType('cabinet_top')" :key="asset.id"><option :value="asset.id" x-text="asset.name"></option></template></select></label>
+                            <label>层高 mm<input type="number" min="1" step="0.1" x-model.number="cabinetTemplateForm.layer_height_mm"></label>
+                            <label>抽拉方向<select x-model="cabinetTemplateForm.pull_axis"><option value="z">Z+</option><option value="-z">Z-</option><option value="x">X+</option><option value="-x">X-</option><option value="y">Y+</option><option value="-y">Y-</option></select></label>
+                            <label>抽拉距离 mm<input type="number" min="1" step="0.1" x-model.number="cabinetTemplateForm.pull_distance_mm"></label>
+                            <label>槽位 X 偏移 mm<input type="number" step="0.1" x-model.number="cabinetTemplateForm.slot_offset_x_mm"></label>
+                            <label>槽位 Y 偏移 mm<input type="number" step="0.1" x-model.number="cabinetTemplateForm.slot_offset_y_mm"></label>
+                            <label>槽位 Z 偏移 mm<input type="number" step="0.1" x-model.number="cabinetTemplateForm.slot_offset_z_mm"></label>
+                            <button class="btn btn-primary appearance-save-btn" @click="saveCabinetTemplate()">保存模板</button>
+                        </div>
+                        <div class="appearance-list">
+                            <template x-for="template in cabinetTemplates" :key="template.id">
+                                <div class="appearance-row">
+                                    <div><strong x-text="template.name"></strong><small x-text="structureTypeLabel(template.structure_type) + ' · 层高 ' + template.layer_height_mm + ' mm'"></small></div>
+                                    <div class="toolbar-actions"><button class="btn btn-secondary" @click="editCabinetTemplate(template)">编辑</button><button class="btn btn-danger" @click="deleteCabinetTemplate(template)">删除</button></div>
+                                </div>
+                            </template>
+                            <div class="empty-state" x-show="cabinetTemplates.length === 0">还没有柜体模板</div>
+                        </div>
+                    </div>
+
+                    <div x-show="appearanceTab === 'box-templates'" class="modal-soft-section">
+                        <div class="led-section-header">
+                            <div class="section-mini-title" x-text="boxTemplateForm.id ? '编辑收纳盒模板' : '新增收纳盒模板'"></div>
+                            <button class="btn btn-secondary" @click="resetBoxTemplateForm()">清空</button>
+                        </div>
+                        <div class="appearance-form-grid">
+                            <label>名称<input x-model="boxTemplateForm.name" placeholder="例如 6×4 标准元件盒"></label>
+                            <label>单格模型<select x-model="boxTemplateForm.cell_model_asset_id"><option value="">默认单格</option><template x-for="asset in modelAssetsByType('box_cell')" :key="asset.id"><option :value="asset.id" x-text="asset.name"></option></template></select></label>
+                            <label>外框模型<select x-model="boxTemplateForm.frame_model_asset_id"><option value="">不使用</option><template x-for="asset in modelAssetsByType('box_frame')" :key="asset.id"><option :value="asset.id" x-text="asset.name"></option></template></select></label>
+                            <label>单格 X 尺寸 mm<input type="number" min="1" step="0.1" x-model.number="boxTemplateForm.cell_width_mm"></label>
+                            <label>单格 Z 尺寸 mm<input type="number" min="1" step="0.1" x-model.number="boxTemplateForm.cell_depth_mm"></label>
+                            <label>单格 Y 高度 mm<input type="number" min="1" step="0.1" x-model.number="boxTemplateForm.cell_height_mm"></label>
+                            <label>X 间距 mm<input type="number" min="0" step="0.1" x-model.number="boxTemplateForm.gap_x_mm"></label>
+                            <label>Z 间距 mm<input type="number" min="0" step="0.1" x-model.number="boxTemplateForm.gap_z_mm"></label>
+                            <label>X 内边距 mm<input type="number" min="0" step="0.1" x-model.number="boxTemplateForm.padding_x_mm"></label>
+                            <label>Z 内边距 mm<input type="number" min="0" step="0.1" x-model.number="boxTemplateForm.padding_z_mm"></label>
+                            <button class="btn btn-primary appearance-save-btn" @click="saveBoxTemplate()">保存模板</button>
+                        </div>
+                        <div class="appearance-list">
+                            <template x-for="template in boxTemplates" :key="template.id">
+                                <div class="appearance-row">
+                                    <div><strong x-text="template.name"></strong><small>X <span x-text="template.cell_width_mm"></span> · Z <span x-text="template.cell_depth_mm"></span> · Y <span x-text="template.cell_height_mm"></span> mm</small></div>
+                                    <div class="toolbar-actions"><button class="btn btn-secondary" @click="editBoxTemplate(template)">编辑</button><button class="btn btn-danger" @click="deleteBoxTemplate(template)">删除</button></div>
+                                </div>
+                            </template>
+                            <div class="empty-state" x-show="boxTemplates.length === 0">还没有收纳盒模板</div>
                         </div>
                     </div>
                 </div>
@@ -1089,6 +1204,7 @@
     <script src="/static/js/features/map-workbench.js"></script>
     <script src="/static/js/features/bom.js"></script>
     <script src="/static/js/features/automation.js"></script>
+    <script src="/static/js/features/model-appearance.js"></script>
     <!-- 3D 地图引擎：Three.js 全局挂载和 3D 模块。 -->
     <script type="module">
     import * as THREE from 'three';
@@ -1100,6 +1216,7 @@
     window.CSS2DRendererModule = CSS2DRenderer;
     </script>
     <script src="/static/js/3d/box-model.js"></script>
+    <script src="/static/js/3d/glb-loader.js"></script>
     <script src="/static/js/3d/cabinet-model.js"></script>
     <script src="/static/js/3d/labels.js"></script>
     <script src="/static/js/3d/highlights.js"></script>
